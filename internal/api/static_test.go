@@ -35,4 +35,15 @@ func TestServerServesWebConsole(t *testing.T) {
 	if !strings.Contains(body, "<!doctype html>") || !strings.Contains(body, "FDE Support Console") {
 		t.Fatalf("GET /web/ body does not look like console HTML: %s", body)
 	}
+
+	rootReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	rootRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rootRec, rootReq)
+
+	if rootRec.Code != http.StatusOK {
+		t.Fatalf("GET / status = %d, want %d; body = %s", rootRec.Code, http.StatusOK, rootRec.Body.String())
+	}
+	if !strings.Contains(rootRec.Body.String(), "FDE Support Console") {
+		t.Fatalf("GET / body does not look like console HTML: %s", rootRec.Body.String())
+	}
 }

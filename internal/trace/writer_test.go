@@ -2,6 +2,8 @@ package trace
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -10,7 +12,8 @@ func TestFileTraceWriterListReturnsNewestFirstAndHonorsLimit(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	writer := NewFileTraceWriter(t.TempDir())
+	tracePath := t.TempDir()
+	writer := NewFileTraceWriter(tracePath)
 
 	first, err := writer.WriteImmediate(ctx, TraceRecord{
 		Solution:    "support",
@@ -30,6 +33,9 @@ func TestFileTraceWriterListReturnsNewestFirstAndHonorsLimit(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("WriteImmediate(second) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tracePath, first.TraceID+".json.tmp"), []byte("{"), 0o644); err != nil {
+		t.Fatalf("write partial temp trace file: %v", err)
 	}
 
 	records, err := writer.List(ctx, 1)

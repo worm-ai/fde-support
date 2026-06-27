@@ -133,6 +133,9 @@ func (w *FileTraceWriter) Finish(ctx context.Context, traceID string, status str
 	if err := tmp.Close(); err != nil {
 		return nil, err
 	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		return nil, err
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		_ = os.Remove(tmpPath)
 		return nil, err
