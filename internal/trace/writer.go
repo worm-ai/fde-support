@@ -101,6 +101,7 @@ func (w *FileTraceWriter) Finish(ctx context.Context, traceID string, status str
 		record.Status = status
 		record.Error = errSummary
 		record.LatencyMS = latency.Milliseconds()
+		record = cloneTraceRecord(record)
 	}
 	w.mu.Unlock()
 	if record == nil {
@@ -114,10 +115,98 @@ func (w *FileTraceWriter) Finish(ctx context.Context, traceID string, status str
 		return nil, err
 	}
 	path := filepath.Join(w.dir, traceID+".json")
-	if err := os.WriteFile(path, bytes, 0o644); err != nil {
+	tmp, err := os.CreateTemp(w.dir, traceID+".*.tmp")
+	if err != nil {
 		return nil, err
 	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(bytes); err != nil {
+		_ = tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, err
+	}
+	cleanup = false
 	return record, nil
+}
+
+func cloneTraceRecord(record *TraceRecord) *TraceRecord {
+	if record == nil {
+		return nil
+	}
+	cloned := *record
+	cloned.Input = cloneMap(record.Input)
+	if len(record.Spans) > 0 {
+		cloned.Spans = make([]TraceSpan, len(record.Spans))
+		for i, span := range record.Spans {
+			cloned.Spans[i] = TraceSpan{
+				Node:      span.Node,
+				Component: span.Component,
+				Attempt:   span.Attempt,
+				Skipped:   span.Skipped,
+				LatencyMS: span.LatencyMS,
+				Input:     cloneMap(span.Input),
+				Output:    cloneMap(span.Output),
+			}
+			if span.Error != nil {
+				errCopy := *span.Error
+				cloned.Spans[i].Error = &errCopy
+			}
+		}
+	}
+	if record.Error != nil {
+		errCopy := *record.Error
+		cloned.Error = &errCopy
+	}
+	return &cloned
+}
+
+func cloneMap(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		switch value := v.(type) {
+		case map[string]any:
+			out[k] = cloneMap(value)
+		case []any:
+			cloned := make([]any, len(value))
+			for i, item := range value {
+				cloned[i] = cloneValue(item)
+			}
+			out[k] = cloned
+		default:
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func cloneValue(v any) any {
+	switch value := v.(type) {
+	case map[string]any:
+		return cloneMap(value)
+	case []any:
+		cloned := make([]any, len(value))
+		for i, item := range value {
+			cloned[i] = cloneValue(item)
+		}
+		return cloned
+	default:
+		return v
+	}
 }
 
 func (w *FileTraceWriter) WriteImmediate(ctx context.Context, record TraceRecord) (*TraceRecord, error) {

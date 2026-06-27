@@ -97,7 +97,10 @@ func NewServer(m *manifest.SolutionManifest, env environment.ResolvedEnvironment
 					writeJSON(w, status, map[string]any{"error": appErr})
 					return
 				}
-				writeJSON(w, http.StatusOK, response)
+				if status == 0 {
+					status = http.StatusOK
+				}
+				writeJSON(w, status, response)
 			})
 		}
 	}

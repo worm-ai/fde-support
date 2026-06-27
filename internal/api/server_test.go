@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"fde-support/internal/environment"
 	"fde-support/internal/manifest"
+	"fde-support/internal/shared"
 	"fde-support/internal/trace"
 	"fde-support/internal/w2a"
 )
@@ -133,6 +135,58 @@ func TestServerTraceAPIs(t *testing.T) {
 	server.Handler().ServeHTTP(missingRec, missingReq)
 	if missingRec.Code != http.StatusNotFound {
 		t.Fatalf("GET missing trace status = %d, want %d", missingRec.Code, http.StatusNotFound)
+	}
+}
+
+func TestServerW2ASensorPreservesCachedIdempotencyStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := w2a.NewMemorySignalIdempotencyStore()
+	signalID := "sig-cached-400"
+	key := w2a.SignalIdempotencyKey{Environment: "poc", SensorID: "ticket_webhook", SignalID: signalID}
+	if err := store.Put(ctx, key, w2a.IdempotencyRecord{
+		Response:   map[string]any{"error": shared.BadRequest("SIGNAL_TYPE_NOT_ALLOWED", "event.type", "signal type is not authorized for this sensor")},
+		HTTPStatus: http.StatusBadRequest,
+	}, time.Hour); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+
+	tracePath := t.TempDir()
+	server := NewServer(testManifest(), environment.ResolvedEnvironment{
+		EnvironmentName: "poc",
+		TracePath:       tracePath,
+	}, nil, store, trace.NewFileTraceWriter(tracePath))
+
+	req := httptest.NewRequest(http.MethodPost, "/w2a/tickets", strings.NewReader(`{
+		"signal_id": "sig-cached-400",
+		"schema_version": "w2a/0.1",
+		"emitted_at": 1719400000000,
+		"source": {
+			"sensor_id": "ticket_webhook",
+			"sensor_version": "0.1.0",
+			"source_type": "ticket-system",
+			"user_identity": "customer-10086",
+			"package": "@world2agent/sensor-webhook"
+		},
+		"event": {
+			"type": "ticket.created",
+			"occurred_at": 1719400000000,
+			"summary": "Customer reported pump E42 error"
+		}
+	}`))
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /w2a/tickets status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response payload: %v", err)
+	}
+	if payload["duplicate"] != true {
+		t.Fatalf("duplicate = %#v, want true", payload["duplicate"])
 	}
 }
 
