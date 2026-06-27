@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -25,10 +27,21 @@ type Server struct {
 func NewServer(m *manifest.SolutionManifest, env environment.ResolvedEnvironment, executor *runtimecore.Executor, store w2a.SignalIdempotencyStore, traceWriter *trace.FileTraceWriter) *Server {
 	router := chi.NewRouter()
 	signalRouter := NewSignalRouter(m, env, executor, store, traceWriter)
+	webRoot := resolveWebRoot()
 
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
+	router.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(webRoot, "index.html"))
+	})
+	router.Get("/web", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/web/", http.StatusMovedPermanently)
+	})
+	router.Get("/web/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(webRoot, "index.html"))
+	})
+	router.Handle("/web/*", http.StripPrefix("/web/", http.FileServer(http.Dir(webRoot))))
 	router.Get("/api/runtime", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, newRuntimeView(m, env))
 	})
@@ -168,4 +181,35 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func resolveWebRoot() string {
+	candidates := []string{}
+	if _, file, _, ok := runtime.Caller(0); ok {
+		candidates = append(candidates, filepath.Dir(filepath.Dir(filepath.Dir(file))))
+	}
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, wd)
+	}
+	for _, start := range candidates {
+		if root := findWebRoot(start); root != "" {
+			return root
+		}
+	}
+	return "web"
+}
+
+func findWebRoot(start string) string {
+	dir := filepath.Clean(start)
+	for {
+		candidate := filepath.Join(dir, "web")
+		if info, err := os.Stat(filepath.Join(candidate, "index.html")); err == nil && !info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }

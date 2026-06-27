@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FDE Support Console</title>
+    <link rel="stylesheet" href="/web/app.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Local Runtime</p>
+        <h1>FDE Support Console</h1>
+      </div>
+      <button id="refreshButton" type="button">Refresh</button>
+    </header>
+
+    <main class="shell">
+      <section class="panel runtime-panel" aria-labelledby="runtimeTitle">
+        <div class="panel-header">
+          <h2 id="runtimeTitle">Runtime</h2>
+          <span id="runtimeStatus" class="status">Loading</span>
+        </div>
+        <dl class="runtime-grid">
+          <div>
+            <dt>Solution</dt>
+            <dd id="solutionName">-</dd>
+          </div>
+          <div>
+            <dt>Environment</dt>
+            <dd id="environmentName">-</dd>
+          </div>
+          <div>
+            <dt>Chat</dt>
+            <dd id="chatPath">-</dd>
+          </div>
+          <div>
+            <dt>W2A Endpoint</dt>
+            <dd id="w2aPath">-</dd>
+          </div>
+          <div class="wide">
+            <dt>Trace Path</dt>
+            <dd id="tracePath">-</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="panel interaction-panel" aria-labelledby="chatTitle">
+        <div class="panel-header">
+          <h2 id="chatTitle">Chat</h2>
+        </div>
+        <form id="chatForm" class="stack">
+          <label for="chatMessage">Message</label>
+          <textarea id="chatMessage" name="message" rows="5">我的咖啡机显示 E42，应该怎么处理？</textarea>
+          <button type="submit">Send Chat</button>
+        </form>
+        <pre id="chatResult" class="result" aria-live="polite"></pre>
+      </section>
+
+      <section class="panel interaction-panel" aria-labelledby="w2aTitle">
+        <div class="panel-header">
+          <h2 id="w2aTitle">W2A Signal</h2>
+        </div>
+        <form id="w2aForm" class="stack">
+          <label for="w2aPayload">Signal JSON</label>
+          <textarea id="w2aPayload" name="payload" rows="14"></textarea>
+          <button type="submit">Send W2A</button>
+        </form>
+        <pre id="w2aResult" class="result" aria-live="polite"></pre>
+      </section>
+
+      <section class="panel trace-panel" aria-labelledby="traceTitle">
+        <div class="panel-header">
+          <h2 id="traceTitle">Traces</h2>
+          <button id="traceRefreshButton" type="button">Reload</button>
+        </div>
+        <div id="traceList" class="trace-list" aria-live="polite"></div>
+        <pre id="traceDetail" class="result trace-detail"></pre>
+      </section>
+    </main>
+
+    <script src="/web/app.js"></script>
+  </body>
+</html>
