@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,21 +7,138 @@
     <link rel="stylesheet" href="/web/app.css">
   </head>
   <body>
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">Local Runtime</p>
-        <h1>FDE Support Console</h1>
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Solution-as-Code FDE Console</p>
+        <h1>从模板到运行的一条线</h1>
+        <p class="hero-text">先选方案，再填最少字段，右侧自动生成 Manifest，底部直接验证 Chat / W2A / Trace 闭环。</p>
       </div>
-      <button id="refreshButton" type="button">Refresh</button>
+      <div class="hero-actions">
+        <span id="runtimeStatus" class="status-pill">Loading runtime</span>
+        <button id="refreshButton" class="secondary-button" type="button">刷新运行时</button>
+      </div>
     </header>
 
-    <main class="shell">
-      <section class="panel runtime-panel" aria-labelledby="runtimeTitle">
-        <div class="panel-header">
-          <h2 id="runtimeTitle">Runtime</h2>
-          <span id="runtimeStatus" class="status">Loading</span>
+    <main class="workspace" aria-label="FDE onboarding workspace">
+      <aside class="sidebar panel">
+        <section class="stack-block">
+          <p class="section-label">方案</p>
+          <div class="nav-card nav-card-active">
+            <strong id="currentSolutionLabel">乐源售后助手</strong>
+            <span>从业务方案进入，不从 YAML 进入。</span>
+          </div>
+          <div class="nav-card">
+            <strong>运行时状态</strong>
+            <span id="runtimeSummary">正在读取本地 runtime</span>
+          </div>
+        </section>
+
+        <section class="stack-block">
+          <p class="section-label">模板</p>
+          <div id="templateList" class="template-list" aria-label="solution templates">
+            <button class="template-item template-item-active" type="button" data-template="support">
+              <strong>售后助手</strong>
+              <span>Chat + W2A + Trace</span>
+            </button>
+            <button class="template-item" type="button" data-template="qa">
+              <strong>知识问答</strong>
+              <span>Chat + Knowledge</span>
+            </button>
+            <button class="template-item" type="button" data-template="ticket">
+              <strong>工单受理</strong>
+              <span>W2A + Handoff</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="stack-block">
+          <p class="section-label">步骤</p>
+          <ol id="stepList" class="step-list">
+            <li class="step-item step-item-active">
+              <span>1</span>
+              <div>
+                <strong>选择场景</strong>
+                <p>模板决定默认组件和 workflow。</p>
+              </div>
+            </li>
+            <li class="step-item">
+              <span>2</span>
+              <div>
+                <strong>填写业务字段</strong>
+                <p>只填方案名、入口、知识源等少量字段。</p>
+              </div>
+            </li>
+            <li class="step-item">
+              <span>3</span>
+              <div>
+                <strong>试跑闭环</strong>
+                <p>用真实接口跑 Chat / W2A / Trace。</p>
+              </div>
+            </li>
+          </ol>
+        </section>
+      </aside>
+
+      <section class="main-stage panel">
+        <div class="stage-head">
+          <div>
+            <p class="section-label">当前步骤</p>
+            <h2>业务字段最小化输入</h2>
+          </div>
+          <div id="formCompleteness" class="stage-badge">0/6 ready</div>
         </div>
-        <dl class="runtime-grid">
+
+        <form id="solutionForm" class="form-grid">
+          <label class="field">
+            <span>方案名称</span>
+            <input id="solutionNameInput" name="solutionName" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>行业</span>
+            <input id="industryInput" name="industry" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>负责人</span>
+            <input id="ownerInput" name="owner" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>环境</span>
+            <input id="environmentInput" name="environment" autocomplete="off">
+          </label>
+          <label class="field wide">
+            <span>业务目标</span>
+            <input id="goalInput" name="goal" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>W2A Endpoint</span>
+            <input id="endpointPathInput" name="endpointPath" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>Signal Type</span>
+            <input id="signalTypeInput" name="signalType" autocomplete="off">
+          </label>
+          <label class="field wide">
+            <span>知识源路径</span>
+            <input id="knowledgeUriInput" name="knowledgeUri" autocomplete="off">
+          </label>
+        </form>
+
+        <div class="callout">
+          <strong>设计意图</strong>
+          <p>新手 FDE 先完成可运行方案，Manifest 变成系统生成的结果，而不是第一屏必须理解的配置负担。</p>
+        </div>
+      </section>
+
+      <section class="preview panel">
+        <div class="stage-head">
+          <div>
+            <p class="section-label">Manifest</p>
+            <h2>自动生成与校验</h2>
+          </div>
+          <div id="manifestStatus" class="stage-badge stage-badge-soft">draft</div>
+        </div>
+
+        <div class="runtime-grid compact">
           <div>
             <dt>Solution</dt>
             <dd id="solutionName">-</dd>
@@ -35,47 +152,66 @@
             <dd id="chatPath">-</dd>
           </div>
           <div>
-            <dt>W2A Endpoint</dt>
+            <dt>W2A</dt>
             <dd id="w2aPath">-</dd>
           </div>
           <div class="wide">
             <dt>Trace Path</dt>
             <dd id="tracePath">-</dd>
           </div>
-        </dl>
+        </div>
+
+        <div class="preview-layout">
+          <div class="preview-pane">
+            <div class="preview-title">Preview</div>
+            <pre id="manifestPreview" class="code-block"></pre>
+          </div>
+          <div class="preview-pane">
+            <div class="preview-title">Checks</div>
+            <ul id="validationChecks" class="check-list"></ul>
+          </div>
+        </div>
       </section>
 
-      <section class="panel interaction-panel" aria-labelledby="chatTitle">
-        <div class="panel-header">
-          <h2 id="chatTitle">Chat</h2>
+      <section class="bottom-band panel" aria-labelledby="flowTitle">
+        <div class="stage-head">
+          <div>
+            <p class="section-label">闭环</p>
+            <h2 id="flowTitle">Chat / W2A / Trace</h2>
+          </div>
+          <div class="stage-badge">live runtime</div>
         </div>
-        <form id="chatForm" class="stack">
-          <label for="chatMessage">Message</label>
-          <textarea id="chatMessage" name="message" rows="5">我的咖啡机显示 E42，应该怎么处理？</textarea>
-          <button type="submit">Send Chat</button>
-        </form>
-        <pre id="chatResult" class="result" aria-live="polite"></pre>
-      </section>
 
-      <section class="panel interaction-panel" aria-labelledby="w2aTitle">
-        <div class="panel-header">
-          <h2 id="w2aTitle">W2A Signal</h2>
-        </div>
-        <form id="w2aForm" class="stack">
-          <label for="w2aPayload">Signal JSON</label>
-          <textarea id="w2aPayload" name="payload" rows="14"></textarea>
-          <button type="submit">Send W2A</button>
-        </form>
-        <pre id="w2aResult" class="result" aria-live="polite"></pre>
-      </section>
+        <div class="flow-grid">
+          <article class="flow-card">
+            <div class="flow-label">Chat</div>
+            <form id="chatForm" class="flow-form">
+              <textarea id="chatMessage" rows="4"></textarea>
+              <button type="submit">发送 Chat</button>
+            </form>
+            <pre id="chatResult" class="result-box" aria-live="polite"></pre>
+          </article>
 
-      <section class="panel trace-panel" aria-labelledby="traceTitle">
-        <div class="panel-header">
-          <h2 id="traceTitle">Traces</h2>
-          <button id="traceRefreshButton" type="button">Reload</button>
+          <article class="flow-card">
+            <div class="flow-label">W2A</div>
+            <form id="w2aForm" class="flow-form">
+              <input id="w2aToken" type="password" placeholder="Bearer token，可留空">
+              <textarea id="w2aDescription" rows="3"></textarea>
+              <textarea id="w2aPayload" rows="7" aria-label="generated W2A payload"></textarea>
+              <button type="submit">发送 W2A Signal</button>
+            </form>
+            <pre id="w2aResult" class="result-box" aria-live="polite"></pre>
+          </article>
+
+          <article class="flow-card trace-card">
+            <div class="flow-card-head">
+              <div class="flow-label">Trace</div>
+              <button id="traceRefreshButton" class="secondary-button" type="button">刷新</button>
+            </div>
+            <div id="traceList" class="trace-list" aria-live="polite"></div>
+            <pre id="traceDetail" class="result-box trace-detail"></pre>
+          </article>
         </div>
-        <div id="traceList" class="trace-list" aria-live="polite"></div>
-        <pre id="traceDetail" class="result trace-detail"></pre>
       </section>
     </main>
 

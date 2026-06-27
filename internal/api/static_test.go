@@ -47,3 +47,36 @@ func TestServerServesWebConsole(t *testing.T) {
 		t.Fatalf("GET / body does not look like console HTML: %s", rootRec.Body.String())
 	}
 }
+
+func TestWebConsoleContainsInteractiveOnboardingShell(t *testing.T) {
+	t.Parallel()
+
+	tracePath := t.TempDir()
+	server := NewServer(testManifest(), environment.ResolvedEnvironment{
+		EnvironmentName: "poc",
+		TracePath:       tracePath,
+	}, nil, w2a.NewMemorySignalIdempotencyStore(), trace.NewFileTraceWriter(tracePath))
+
+	req := httptest.NewRequest(http.MethodGet, "/web/", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /web/ status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, marker := range []string{
+		`id="templateList"`,
+		`id="solutionForm"`,
+		`id="manifestPreview"`,
+		`id="validationChecks"`,
+		`id="chatForm"`,
+		`id="w2aForm"`,
+		`id="traceList"`,
+		`src="/web/app.js"`,
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("GET /web/ body missing %s: %s", marker, body)
+		}
+	}
+}
