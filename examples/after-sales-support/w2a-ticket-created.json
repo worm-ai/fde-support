@@ -1,0 +1,24 @@
+{
+  "signal_id": "8b1f0c4a-5d2e-4f87-9a1b-3c0e5f8a9d12",
+  "schema_version": "w2a/0.1",
+  "emitted_at": 1719400000000,
+  "source": {
+    "sensor_id": "ticket_webhook",
+    "sensor_version": "0.1.0",
+    "source_type": "ticket-system",
+    "user_identity": "customer-10086",
+    "package": "@world2agent/sensor-webhook"
+  },
+  "event": {
+    "type": "ticket.created",
+    "occurred_at": 1719400000000,
+    "summary": "Customer reported pump E42 error after restart; support triage is required"
+  },
+  "source_event": {
+    "data": {
+      "ticketId": "T-10086",
+      "productModel": "PX-9",
+      "description": "The pump shows E42 after restart. What should I do?"
+    }
+  }
+}
