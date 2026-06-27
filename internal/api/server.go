@@ -1,0 +1,168 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"os"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+
+	"fde-support/internal/environment"
+	"fde-support/internal/manifest"
+	"fde-support/internal/runtimecore"
+	"fde-support/internal/shared"
+	"fde-support/internal/trace"
+	"fde-support/internal/w2a"
+)
+
+type Server struct {
+	httpHandler http.Handler
+}
+
+func NewServer(m *manifest.SolutionManifest, env environment.ResolvedEnvironment, executor *runtimecore.Executor, store w2a.SignalIdempotencyStore, traceWriter *trace.FileTraceWriter) *Server {
+	router := chi.NewRouter()
+	signalRouter := NewSignalRouter(m, env, executor, store, traceWriter)
+
+	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	})
+	router.Get("/api/runtime", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, newRuntimeView(m, env))
+	})
+	router.Get("/api/traces", func(w http.ResponseWriter, r *http.Request) {
+		limit := 20
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil {
+				writeAppError(w, shared.BadRequest("INVALID_TRACE_LIMIT", "limit", "limit must be an integer"))
+				return
+			}
+			limit = parsed
+		}
+		records, err := traceWriter.List(r.Context(), limit)
+		if err != nil {
+			writeAppError(w, shared.Internal("TRACE_LIST_FAILED", "", err.Error()))
+			return
+		}
+		writeJSON(w, http.StatusOK, records)
+	})
+	router.Get("/api/traces/{traceId}", func(w http.ResponseWriter, r *http.Request) {
+		traceID := chi.URLParam(r, "traceId")
+		record, err := traceWriter.Load(r.Context(), traceID)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				writeAppError(w, shared.NotFound("TRACE_NOT_FOUND", "traceId", "trace not found"))
+				return
+			}
+			writeAppError(w, shared.Internal("TRACE_LOAD_FAILED", "traceId", err.Error()))
+			return
+		}
+		writeJSON(w, http.StatusOK, record)
+	})
+	router.Post("/chat", func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := decodeJSON(r, &payload); err != nil {
+			writeAppError(w, shared.BadRequest("INVALID_JSON", "", err.Error()))
+			return
+		}
+		response, appErr := signalRouter.HandleChat(r.Context(), payload)
+		if appErr != nil {
+			writeAppError(w, appErr)
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
+	})
+	for _, sensor := range m.Perception.Sensors {
+		if endpoint, ok := sensor.Config["endpointPath"].(string); ok && endpoint != "" {
+			sensorCopy := sensor
+			router.Post(endpoint, func(w http.ResponseWriter, r *http.Request) {
+				var payload map[string]any
+				if err := decodeJSON(r, &payload); err != nil {
+					appErr := shared.BadRequest("INVALID_JSON", "", err.Error())
+					_ = signalRouter.writeRejectedTrace(r.Context(), sensorCopy, nil, appErr)
+					writeAppError(w, appErr)
+					return
+				}
+				response, status, appErr := signalRouter.HandleSignal(r.Context(), sensorCopy, payload, r.Header.Get("Authorization"))
+				if appErr != nil {
+					if status == 0 {
+						status = appErr.HTTPStatus
+					}
+					if status == 0 {
+						status = http.StatusInternalServerError
+					}
+					writeJSON(w, status, map[string]any{"error": appErr})
+					return
+				}
+				writeJSON(w, http.StatusOK, response)
+			})
+		}
+	}
+
+	return &Server{httpHandler: router}
+}
+
+func (s *Server) Handler() http.Handler {
+	return s.httpHandler
+}
+
+func decodeJSON(r *http.Request, target any) error {
+	defer r.Body.Close()
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	decoder.UseNumber()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	normalizeJSONNumbers(target)
+	return nil
+}
+
+func normalizeJSONNumbers(value any) {
+	switch v := value.(type) {
+	case *map[string]any:
+		for key, item := range *v {
+			(*v)[key] = normalizeValue(item)
+		}
+	}
+}
+
+func normalizeValue(value any) any {
+	switch v := value.(type) {
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return i
+		}
+		if f, err := v.Float64(); err == nil {
+			return f
+		}
+		return v.String()
+	case map[string]any:
+		for key, item := range v {
+			v[key] = normalizeValue(item)
+		}
+		return v
+	case []any:
+		for i, item := range v {
+			v[i] = normalizeValue(item)
+		}
+		return v
+	default:
+		return value
+	}
+}
+
+func writeAppError(w http.ResponseWriter, appErr *shared.AppError) {
+	if appErr.HTTPStatus == 0 {
+		appErr.HTTPStatus = http.StatusInternalServerError
+	}
+	writeJSON(w, appErr.HTTPStatus, map[string]any{"error": appErr})
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}
