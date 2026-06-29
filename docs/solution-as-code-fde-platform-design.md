@@ -47,7 +47,11 @@ FDE 需要快速交付可信的 AI 解决方案，同时保留足够的工程纪
 - 将评测、可观测性和交付检查内建到运行路径中。
 - 允许 PoC 在不重写核心逻辑的前提下走向生产。
 
+- 让 FDE 在客户现场面对多样化需求时，主要工作为装配而非从零编码：选模板、换数据源、组合组件、调整工作流，几小时内拉出可演示方案。
+- 让自定义组件开发有清晰的接口规范和契约约束，FDE 编码时知道输入什么、输出什么、平台提供什么能力，而不是每次翻平台源码摸索接入方式。
 ## MVP 非目标
+
+
 
 - 完整可视化工作流构建器。
 - 多租户企业级控制平面。
@@ -118,25 +122,45 @@ W2A 提供这一层的标准化协议：
 
 边界必须明确：Sensor 负责感知，不负责业务决策；W2A Signal 负责描述外部变化，不负责选择动作；Solution Runtime 负责路由、编排、评测和交付约束。
 
+
+### 5. 装配优先于编码，编码有规范约束
+
+FDE 的核心工作模式不是为每个客户方案编写组件代码，而是在客户现场完成"装配"：
+
+- 80% 的场景：选方案模板、换数据源、调 prompt/规则配置、组合既有组件，不写代码。
+- 20% 的场景：当通用组件无法满足特殊需求时，按平台规范实现自定义组件——写代码可以，但不是从零摸索，而是实现一个已知契约。
+
+平台的责任是让"装配"足够强大、让"编码"足够清晰：
+
+- 通用组件库：`llm-classifier`、`llm-generator`、`data-query`、`rule-evaluator`、`http-caller`、`human-handoff` 等少量高度可配置组件，覆盖多数常见方案模式。组件行为由 Manifest 中的 prompt、规则、查询模板完全定义，同一组件通过不同配置适配不同行业和场景。
+- 方案模板：平台内置可运行的模板 Manifest（客服问答、数据查询、告警升级、审批流程等），FDE 选择一个作为起点，修改配置和数据源即可拉起新方案。模板引用的是通用组件，FDE 不需要从空白 YAML 开始。
+- 组件开发规范（Component SDK）：当通用组件无法满足需求时，FDE 按平台规范实现自定义组件——声明 `component.yaml` 契约（输入/输出 schema、所需能力），实现 `Run(ctx, input, runtime) → output` 接口，将组件放入方案目录。平台自动发现、加载、校验。FDE 的精力花在业务逻辑上，不花在摸索平台源码上。
+- 组件发现层级：方案级自定义组件覆盖团队共享组件，团队共享组件覆盖平台内置组件。同名的方案级组件优先加载，使 FDE 可以在不修改平台代码的前提下替换任意组件的实现。
+
+衡量平台成功与否的标准不是内置了多少组件，而是 FDE 从"客户提出需求"到"可演示方案跑起来"的时间——以及其中写代码的比例。
+
+
 ## 核心抽象：Solution
 
 `Solution` 是一个 AI 业务解决方案的完整、版本化定义。它包含四类资产。
 
 ```yaml
 solution:
+  solutionType: customer-support   # 方案类型，决定默认组件、评测指标、模板
   perception:
     sensors:
     triggers:
   knowledge:
-    sources:
+    sources:       # 支持 document / table / rules 三种源类型
     schemas:
     quality_gates:
-  components:
-    intent_classifier:
+  components:      # 引用通用组件或自定义组件
+    llm-classifier:
     retriever:
-    agent:
-    tools:
-    human_handoff:
+    llm-generator:
+    data-query:
+    rule-evaluator:
+    human-handoff:
   runtime:
     workflow:
     model_policy:
@@ -150,6 +174,8 @@ solution:
 ```
 
 Manifest 是 FDE、W2A Sensor、Runtime、组件注册表、知识流水线、评测系统和交付系统之间的契约。
+
+`solutionType` 是方案的类型标签，决定平台推荐哪些默认组件、评测指标和模板字段。平台内置多种方案模板（客服问答、数据查询、告警升级、审批流程等），FDE 选择模板后只需修改配置和数据源，无需从空白 Manifest 开始。
 
 ## 架构概览
 
@@ -233,20 +259,24 @@ MVP 职责：
 
 MVP 职责：
 
-- 读取 Manifest 中声明的知识源。
-- 生成符合声明 Schema 的知识单元。
+- 读取 Manifest 中声明的知识源，支持多种源类型（`document`、`table`、`rules`）。
+- 文档型知识（JSONL）：生成符合声明 Schema 的知识单元，构建关键词索引。
+- 表格型知识（CSV、Excel）：加载为内存表，通过 `KnowledgeReader.Query()` 提供结构化查询。
+- 规则型知识：加载为可评估的规则集，通过 `KnowledgeReader.Evaluate()` 提供条件匹配。
 - 执行基础质量门禁。
 - 持久化质量报告。
-- 为检索组件提供带来源引用的知识。
+- 为检索和查询组件提供统一的知识访问接口。
 
 未来职责：
 
-- 版面感知的文档解析。
+- 版面感知的文档解析（PDF、Word、Markdown → JSONL）。
+- Python Worker 处理重文档解析、OCR、Embedding 生成。
 - 跨来源冲突检测。
 - 领域专家审阅工作台。
 - 知识版本化与回滚。
 - Schema 辅助抽取。
 - 知识回归测试。
+- 向量检索（pgvector）作为关键词检索的补充。
 
 ### 可组合资产注册表
 
@@ -254,19 +284,22 @@ MVP 职责：
 
 MVP 职责：
 
-- 解析 `registry.retriever.local-keyword@1.0.0` 这类组件引用。
-- 从文件加载本地组件元数据。
-- 将 Manifest 配置绑定到组件实例。
-- 支持少量硬编码组件。
+- 解析 `registry.core.llm-classifier@1.0.0` 这类组件引用。
+- 按三层优先级发现组件：方案级自定义组件 → 团队共享组件 → 平台内置组件。
+- 从 `component.yaml` 加载组件元数据和契约（input/output/config schema、requires）。
+- 将 Manifest 配置绑定到组件实例，按 `configSchema` 校验配置类型。
+- 内置通用组件库（llm-classifier、llm-generator、data-query、rule-evaluator、http-caller、human-handoff）。
+- 支持方案模板：从 `templates/` 目录加载可运行的模板 Manifest。
 
 未来职责：
 
-- 组件发布与审批。
+- 组件打包与团队共享（`solution component publish`）。
 - 语义化版本约束。
 - 依赖扫描。
 - 组件兼容性检查。
 - 行业解决方案包。
-- 使用分析与复用指标。
+- 模板市场（FDE 发布验证过的方案模板供团队复用）。
+- 使用分析与复用指标（自动统计新方案中引用已有组件/模板的比例）。
 
 ### 约束性交付框架
 
@@ -294,6 +327,140 @@ MVP 职责：
 Runtime 读取 Manifest，解析环境，加载组件，执行工作流，记录 Trace，并暴露 API。
 
 Runtime 不只是一个工作流画布。它是把资产、知识、质量、可观测性和交付连接起来的执行环境。
+
+### 组件开发规范（Component SDK）
+
+当通用组件无法满足客户特殊需求时，FDE 需要按平台规范实现自定义组件。平台通过 Component SDK 定义清晰的契约，让 FDE 编码时有章可循。
+
+#### 组件目录约定
+
+自定义组件放在方案目录下，平台自动发现和加载：
+
+```text
+my-solution/
+  manifest.yaml
+  components/                          # 方案级自定义组件
+    my-custom-classifier/
+      component.yaml                   # 组件契约声明
+      component.go                     # 组件实现
+  data/
+    knowledge.jsonl
+```
+
+#### component.yaml 契约
+
+每个自定义组件通过 `component.yaml` 向平台声明其契约：
+
+```yaml
+ref: registry.custom.my-classifier@1.0.0
+category: processor
+inputSchema:
+  message: string
+outputSchema:
+  intent: string
+  confidence: number
+configSchema:
+  labels: array
+  model: string?
+requires:
+  - model.generate
+```
+
+契约字段说明：
+
+- `ref`：组件唯一引用标识，遵循 `registry.<namespace>.<name>@<semver>` 格式。
+- `category`：`processor`（有输入→有输出）或 `action`（执行副作用）。
+- `inputSchema`：输入字段及其类型，用于 Validator 校验工作流节点间的数据流兼容性。
+- `outputSchema`：输出字段及其类型，下游节点引用时校验类型匹配。
+- `configSchema`：组件配置字段及其类型，`?` 后缀表示可选字段。Manifest 中 `components[].config` 在 `Instantiate()` 时据此校验。
+- `requires`：组件所需平台能力清单（`knowledge.search`、`knowledge.query`、`model.generate`、`http.call`）。Runtime 启动时校验能力可用性，不可用在 `solution validate` 阶段报错。
+
+#### Component 接口
+
+FDE 实现自定义组件只需满足 `Component` 接口：
+
+```go
+type Component interface {
+    ID() string
+    Category() ComponentCategory
+    Run(ctx context.Context, input map[string]any, runtime RuntimeContext) (map[string]any, error)
+}
+```
+
+#### RuntimeContext 能力清单
+
+`RuntimeContext` 是平台注入给组件的运行时能力。FDE 在 `component.yaml` 中声明 `requires`，Runtime 启动时校验能力可用性：
+
+```go
+type RuntimeContext interface {
+    Environment() string                 // 当前环境名
+    Knowledge() KnowledgeReader          // Search() + Query() 多模态知识访问
+    Model() ModelGateway                 // LLM 调用
+    HTTP() HTTPCaller                    // 外部 API 调用
+    Logger() Logger                      // 结构化日志
+    Request() RequestMetadata            // 请求元数据（trigger 类型、sensor 信息）
+    Error() *RuntimeErrorSummary         // fallback 模式下可读的错误上下文
+    Actions() []ActionSummary            // 已完成 action 的结构化摘要
+}
+```
+
+每个能力都是接口，FDE 在 `component.yaml` 里声明 `requires: [model.generate, http.call]`，Runtime 启动时校验该组件所需能力是否可用，不可用则在 `solution validate` 阶段就报错。
+
+#### 组件发现层级
+
+平台按以下优先级发现和加载组件：
+
+1. **方案级自定义组件**（`<manifest目录>/components/`）
+2. **团队共享组件**（`$SOLUTION_HOME/components/registry/`）
+3. **平台内置组件**（内置通用组件库）
+
+同名的方案级组件覆盖团队级，团队级覆盖平台级。FDE 可以在不修改平台代码的前提下替换任意组件的实现。
+
+#### 通用组件库
+
+平台内置少量高度可配置的通用组件，覆盖多数常见方案模式。组件行为由 Manifest 中的 prompt、规则、查询模板完全定义，同一组件通过不同配置适配不同行业和场景：
+
+| 通用组件 | 类别 | 行为由 Manifest 配置决定 |
+|----------|------|------------------------|
+| `llm-classifier` | processor | `prompt` + `labels` → 分类结果 + 置信度 |
+| `llm-extractor` | processor | `prompt` + `schema` → 结构化提取 |
+| `llm-generator` | processor | `prompt` + `context` → 回答/总结/翻译 |
+| `data-query` | processor | `source` + `query` → 结构化查询结果 |
+| `rule-evaluator` | processor | `rules` 列表 → 条件匹配结果 |
+| `http-caller` | action | `url` + `method` + `bodyTemplate` → API 调用 |
+| `human-handoff` | action | `queue` + `reason` → 人工转接 |
+
+FDE 在 Manifest 中配置通用组件，无需编写代码：
+
+```yaml
+components:
+  - id: classifier
+    component: registry.core.llm-classifier@1.0.0
+    config:
+      prompt: |
+        将客户消息分类为以下之一：complaint（投诉）、inquiry（咨询）、urgent（紧急）
+      model: gpt-4.1-mini
+  - id: data_fetcher
+    component: registry.core.data-query@1.0.0
+    config:
+      source: warranty_table
+      query: SELECT * FROM warranties WHERE product_model = $product_model
+```
+
+#### 方案模板
+
+平台内置可运行的模板 Manifest，FDE 选择一个作为起点。模板引用的是通用组件，FDE 只需修改配置和数据源：
+
+```text
+templates/
+  customer-support/manifest.yaml       # 客服问答：classify → retrieve → answer
+  data-inquiry/manifest.yaml           # 数据查询：classify → query → format
+  alert-escalation/manifest.yaml       # 告警升级：monitor → evaluate → notify
+  approval-flow/manifest.yaml          # 审批流程：receive → check → await → execute
+```
+
+每份模板是可直接 `solution run` 的完整 Manifest。FDE 拿到后改的是 prompt、数据源路径、规则列表——全是 Manifest 内的 YAML。若通用组件无法满足需求，FDE 将模板中的组件引用替换为自定义组件引用，工作流结构不变。
+
 
 ## MVP Manifest Schema
 
@@ -1301,22 +1468,25 @@ MVP 响应：
 
 - `solution validate manifest.yaml`。
 - `solution run manifest.yaml --env=poc`。
-- 强类型 Manifest 结构。
+- 强类型 Manifest 结构，含 `solutionType` 字段。
 - 必填字段与交叉引用校验。
 - `perception.sensors` 与 `perception.triggers` 校验。
 - 标准 `RuntimeRequest` 结构，统一 Chat 与 W2A Signal 触发路径。
 - MVP 级 `workflow.inputMapping` 字段路径映射。
-- 本地硬编码组件注册表。
+- 组件注册表框架：支持方案级自定义组件发现（`components/` 目录扫描 + `component.yaml` 加载）。
+- `Component` 接口与 `RuntimeContext` 接口稳定化（含 `Knowledge()`、`Model()`、`HTTP()` 能力入口，Phase 1 部分能力返回未实现）。
+- `KnowledgeReader` 接口扩展为 `Search()` + `Query()`，Phase 1 实现 `Search()`（JSONL 文档型），`Query()` 返回未实现。
 - 支持简单 `when` 的最小工作流执行器。
 - 显式 `step_outputs[node_id]` 数据上下文。
 - `processor` 与 `action` 两类组件的统一执行接口。
 - 分层 Runtime Context。
 - 最小 `W2ASensorManager` 与 `SignalRouter`，可接收并校验 Webhook 类 W2A 标准 Signal。
-- 最小知识加载器：读取 Manifest 声明的 `type: jsonl` 知识源，生成最小质量报告，构建内存关键词索引，实现 `context.knowledge.retrieve`。
-- 意图分类、JSONL 知识检索、答案生成、人工升级组件。Phase 1 不依赖 Phase 2 的解析、质量门禁和持久化索引。
+- 最小知识加载器：读取 Manifest 声明的 `type: jsonl` 知识源，生成最小质量报告，构建内存关键词索引，实现 `context.knowledge.Search()`。
+- 通用组件：`llm-classifier`、`llm-generator`、`human-handoff`（prompt 驱动，行为由 Manifest 配置定义）。
 - `POST /chat` 端点。
 - Manifest 声明的 W2A Webhook 端点，例如 `POST /w2a/tickets`。`POST /signals/w2a` 仅作为可选内部测试入口。
 - 基础 JSON Trace 生成。
+- 模板变量引用语法（`{{node_id.field}}`），在组件执行前做字符串插值。
 
 明确排除：
 
@@ -1327,22 +1497,27 @@ MVP 响应：
 - 复杂表达式语言。
 - Kubernetes 部署。
 - 完整 UI。
+- 表格型知识源（CSV/Excel）查询。
+- 子工作流。
 
-### 阶段 2：最小注册表与知识流水线
+### 阶段 2：多模态知识与通用组件集
 
 目标周期：2 周。
 
 交付物：
 
-- 基于 YAML 或 JSON 元数据的本地组件注册表，并采用 `components/registry/<namespace>/<name>/<version>/` 目录结构。
-- 组件引用与版本解析。
-- 从本地 Markdown 或 JSONL 知识源摄取数据。
-- 生成符合 `troubleshooting_qa` 的知识单元。
-- 支持带 `scope` 的质量门禁检查与质量报告输出。
-- 通过 `runtime.knowledgeBindings` 将知识源注入检索组件。
-- 检索器从知识单元返回引用。
+- 本地组件注册表目录结构：`components/registry/<namespace>/<name>/<version>/component.yaml`。
+- 组件引用与版本解析，含 `requires` 能力校验。
+- 通用组件库完整实现：`llm-classifier`、`llm-extractor`、`llm-generator`、`data-query`、`rule-evaluator`、`http-caller`、`human-handoff`。
+- `KnowledgeReader.Query()` 实现：支持 CSV 表格型知识源，SQLite 内存表查询。
+- `solution ingest` 命令：支持多种知识源类型（document、table、rules），执行完整质量门禁（missing_required_fields、conflicting_answers、stale_content）。
+- 知识单元持久化（PostgreSQL schema 草案）。
+- Python Worker 原型：PDF/Word/Markdown → JSONL，CSV/Excel → 标准化表格格式。
+- `RuntimeContext.Model()` 与 `RuntimeContext.HTTP()` 能力实现。
+- 内置方案模板：客服问答、数据查询、告警升级（可直接 `solution run` 的完整 Manifest）。
+- 前端控制台按 `solutionType` 展示不同的配置表单。
 
-### 阶段 3：评测与发布门禁
+### 阶段 3：多模式评测与子工作流
 
 目标周期：1.5 周。
 
@@ -1350,13 +1525,16 @@ MVP 响应：
 
 - 评测执行器读取 JSONL Golden Cases。
 - Golden Cases 支持 `runtime_request_jsonl`，覆盖聊天触发和 W2A Signal 触发。
-- 支持 citation coverage 和简单 answer accuracy 指标。
+- 评测指标按 `solutionType` 区分：问答用 `citation_coverage` + `answer_accuracy`，查询用 `result_accuracy`，告警用 `escalation_precision`。
+- 评测指标可注册：每种方案类型自带默认指标集。
 - `solution release` 默认现场执行 `schedule: onRelease` 且 `severity: block` 的评测门禁。
 - 阻断型门禁失败时阻断发布。
 - `schedule: weekly` 门禁只在 `solution evaluate` 或监控流程中执行，失败时生成监控事件或告警记录，不自动阻断线上服务。
+- 子工作流引擎：节点可引用命名工作流，支持模块化方案组装。
+- 组件间类型流校验：Validator 检查工作流上下游节点的 input/output schema 类型兼容性。
 - Trace 数据可用于评测调试。
 
-### 阶段 4：交付与环境切换
+### 阶段 4：交付、组件共享与模板市场
 
 目标周期：1 周。
 
@@ -1365,9 +1543,12 @@ MVP 响应：
 - `--env=production` 解析生产配置。
 - 发布检查覆盖模型凭证、Sensor 凭证、action 凭证、Signal 入口可达性、知识质量、评测门禁、可观测性和安全基线。
 - `solution release` 成功时生成 `./deploy/<env>/`，至少包含 `docker-compose.yaml`、`.env.example`、运行说明和重建说明；实现可额外生成 K8s 清单或脚本，但目录契约不得变化。
-- `./deploy/<env>/` 必须是可自包含启动包：包含解析后的 Manifest、必要的 JSONL 知识源和评测数据集，或在生成说明中声明等价卷挂载；若复制文件导致路径变化，release 必须重写 `knowledge.sources[].uri`、`evaluation.datasets[].uri` 为容器内可解析路径。
+- `./deploy/<env>/` 必须是可自包含启动包：包含解析后的 Manifest、必要的知识源和评测数据集，或在生成说明中声明等价卷挂载；若复制文件导致路径变化，release 必须重写 `knowledge.sources[].uri`、`evaluation.datasets[].uri` 为容器内可解析路径。
 - 若实现 `solution destroy`，只允许删除部署资源和持久化数据卷；重新 `solution run` 或重新部署时只能从 Manifest、知识源和环境配置重建状态。
 - 同一份 Manifest 从 `poc` 提升到 `production`，无需修改工作流逻辑。
+- `solution component publish`：FDE 将验证过的自定义组件打包发布到团队共享仓库。
+- 方案模板市场：FDE 可发布验证过的方案模板供团队复用。
+- 复用率统计：自动计算新方案中有多少引用已有组件和模板。
 
 ## MVP 验收标准
 
@@ -1386,6 +1567,9 @@ MVP 响应：
 11. Manifest 和 Trace 输出中不存储明文密钥。
 12. `when` 条件只能通过 `node_id.field` 访问上游节点输出，隐式变量访问会被校验失败。
 13. `workflow.nodes[].inputs` 引用可能被跳过的节点输出时，`solution validate` 必须失败。
+14. FDE 选择平台内置模板，修改知识源路径和 prompt 配置后，`solution run` 可拉起一个不同于售后问答的方案（如数据查询），全程不写组件代码。
+15. FDE 按 Component SDK 规范编写自定义组件（`component.yaml` + `Run()` 实现），放入方案目录后，`solution run` 自动发现并加载，`solution validate` 校验其契约。
+16. 同一个通用组件（如 `llm-classifier`）通过不同 Manifest 配置适配不同行业和场景，无需修改组件代码。
 
 ## 成功指标
 
@@ -1397,17 +1581,28 @@ MVP 响应：
 
 示例目标：
 
-- 新 FDE 能使用已有组件和小规模客户知识集，在一天内创建一个支持助手 PoC。
+- FDE 选择平台内置模板，修改数据源和配置后，在 1 小时内拉起一个可演示的方案（不限于问答）。
 - 同一个 PoC 不仅支持聊天入口，也能通过至少一个 W2A Signal 入口被真实或模拟业务事件触发。
+- FDE 按 Component SDK 规范编写自定义组件，在半天内完成组件开发并集成到方案中。
+
+### 装配率
+
+衡量一个新方案中，FDE 通过配置和既有组件组装完成的比例，而非编写新代码。
+
+示例目标：
+
+- 80% 的客户方案通过选择模板 + 修改配置 + 组合既有组件完成，不写代码。
+- 需要自定义组件的方案中，FDE 只编写业务逻辑代码，平台接入代码（组件发现、配置校验、能力注入）由平台自动处理。
 
 ### 复用率
 
-衡量一个新解决方案中，有多少来自已有组件、知识 Schema、评测集和交付检查。
+衡量一个新解决方案中，有多少来自已有组件、模板、知识 Schema、评测集和交付检查。
 
 示例目标：
 
 - 同行业第二个客户方案中，超过 60% 的内容引用已有注册资产。
 - 常见外部系统接入复用已有 W2A Sensor，而不是重新编写 Agent 专属集成代码。
+- 自定义组件经 `solution component publish` 发布后，在后续方案中被团队其他 FDE 引用。
 
 ### 生产继承率
 
