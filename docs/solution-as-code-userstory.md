@@ -15,11 +15,11 @@
 - 组件不可恢复的系统异常必须通过返回值 `(nil, error)` 抛出；action 组件的可恢复业务失败通过 `output["status"] = "failed"` 表达，禁止使用 `"error"` 作为 status 值。processor 组件的输出不包含 `status` 字段。
 - MVP 中的 W2A Sensor 采用 Runtime 内置 Webhook 入口模型：Runtime 根据 `perception.sensors[].config.endpointPath` 暴露 HTTP 入口并校验认证；独立 Sensor 进程或 SensorHub 集成属于后续能力。
 - `@world2agent/sensor-webhook@1.0.0` 是 MVP `SensorRegistry` 的内置 Sensor 引用，不要求从 npm 安装，也不通过 `ComponentRegistry` 解析；版本必须显式 pin。
-- W2A Signal 幂等缓存仅在认证和 envelope 校验通过后才查询/写入；认证失败的请求不参与幂等缓存。
+- W2A Signal 幂等缓存仅在认证、envelope 校验、Sensor 来源校验和 Signal 类型校验通过后才查询/写入；认证失败的请求不参与幂等缓存。
 - `RuntimeContext.Model()` 在 Phase 1 提供基于环境密钥的最小模型网关实现（如调用 OpenAI API）；`HTTP()` 能力在 Phase 2 可用。
 - W2A Sensor 只负责把外部事件标准化为 W2A Signal，不负责业务决策、工作流编排、RAG、动作执行或发布治理。
 - SignalRouter 必须校验 `signal.source.sensor_id` 等于当前 endpoint 对应的 Manifest Sensor ID，防止 Signal 来源伪造。
-- Phase 1 只验证 Runtime 内核、统一组件接口（含 `llm-classifier`、`retriever`、`llm-generator`、`human-handoff`）、mock action、Trace、W2A Signal 入口和启动时 JSONL 知识加载；真实知识摄取流水线、真实外部系统调用、知识工作台和增量索引不进入 Phase 1。
+- Phase 1 只验证 Runtime 内核、统一组件接口和 7 个内置组件实例（`support-router`、`beverage-router`、`severity-beverage`、`local-keyword`、`cited-answer`、`human-handoff`、`mock-create-service-ticket`）、Trace、W2A Signal 入口和启动时 JSONL 知识加载；真实知识摄取流水线、真实外部系统调用、知识工作台和增量索引不进入 Phase 1。
 - Phase 1 检索组件统一使用 `registry.retriever.local-keyword@1.0.0`；混合检索和向量检索属于 Phase 2+。
 - Manifest 中引用的组件版本号必须与平台内置注册表中已注册的版本一致；Phase 1 内置组件版本均为 `@1.0.0`。
 - 所有组件的 citations 统一使用 `string[]` 格式（`"source#ref"`），由知识加载时统一生成该格式的引用字符串。
@@ -109,7 +109,8 @@ metadata:
   version: 0.1.0
   owner: fde-zhouyuan
   industry: beverage
-  solutionType: customer-support
+
+solutionType: customer-support
 
 knowledge:
   sources:
@@ -403,13 +404,13 @@ workflow:
    - Given 工作流中 `check_critical` 组件接收到 `intent: complaint` 且内容包含“呕吐”“医疗”等关键词
    - When 该节点输出 `{"level":"critical"}`
    - Then `auto_create_ticket` 节点被触发，mock action 返回 `{"status":"created","ticketId":"mock-T-20001"}`
-   - And 最终回答包含“已为您创建工单 mock-T-20001，专员将联系您”
+   - And 最终响应的 `actions` 数组包含该工单创建结果，前端或调用方可据此展示“已为您创建工单 mock-T-20001，专员将联系您”
 
 2. **异常场景：外部系统不可用时降级**
    - Given mock `create_ticket` 组件被配置为模拟失败，且 `auto_create_ticket` 节点显式声明 `continueOnFailure: true`
    - When 条件满足，执行该 action
    - Then 组件返回 `{"status":"failed"}`，工作流继续执行后续节点，同时在 Trace 中记录错误信息
-   - And 最终回答提示用户“系统繁忙，请稍后重试或联系人工客服”
+   - And 最终响应的 `actions` 数组保留失败状态，前端或调用方可据此展示“系统繁忙，请稍后重试或联系人工客服”
 
 3. **边界场景：非紧急客诉不触发 action**
    - Given 输入内容为“口感偏甜”，`check_critical` 输出 `level: normal`
@@ -486,7 +487,7 @@ workflow:
    - When 执行 `solution release lecharm-support.yaml --env=production`
    - Then 平台依次执行 `model_credentials_configured`、`sensor_credentials_configured`、`action_credentials_configured`、`signal_ingress_reachable`、`knowledge_quality_passed`、`eval_gates_passed`、`observability_enabled`、`security_baseline_passed` 检查
    - And 全部通过后，在 `./deploy/production/` 下生成 `docker-compose.yaml`、`.env.example`、运行说明和重建说明
-   - And `docker-compose.yaml` 启动同一个 Runtime 二进制和同一份 Manifest/config，行为与 `solution run` 等价
+   - And `docker-compose.yaml` 启动同一个 Runtime 二进制，并使用源 Manifest 的只读快照或等价卷挂载，行为与 `solution run` 等价
    - And 工作流节点、组件引用、知识 Schema 与 PoC 完全一致
 
 2. **异常场景：评测门禁未通过**
@@ -601,6 +602,16 @@ delivery:
 **Manifest 中的知识质量门禁（`knowledge` 段下新增）**
 ```yaml
 knowledge:
+  schemas:
+    - id: faq
+      fields:
+        - name: symptom
+        - name: cause
+        - name: resolution
+          required: true
+        - name: product_model
+        - name: source_ref
+          required: true
   qualityGates:
     - type: missing_required_fields
       severity: block
@@ -735,7 +746,8 @@ metadata:
   version: 0.1.0
   owner: fde-zhouyuan
   industry: beverage
-  solutionType: customer-support
+
+solutionType: customer-support
 
 perception:
   sensors:

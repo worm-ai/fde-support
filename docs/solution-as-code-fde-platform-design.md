@@ -486,7 +486,7 @@ templates/
 MVP Schema 应足够显式，可以驱动 Runtime 执行；同时也要足够小，便于快速实现。
 
 ```yaml
-apiVersion: solution.ai/v1alpha1
+apiVersion: solution.codex/v1
 kind: Solution
 
 metadata:
@@ -494,6 +494,8 @@ metadata:
   version: 0.1.0
   owner: fde-team
   industry: manufacturing
+
+solutionType: customer-support
 
 perception:
   sensors:
@@ -520,11 +522,13 @@ knowledge:
   schemas:
     - id: troubleshooting_qa
       fields:
-        - symptom
-        - cause
-        - resolution
-        - product_model
-        - source_ref
+        - name: symptom
+        - name: cause
+        - name: resolution
+          required: true
+        - name: product_model
+        - name: source_ref
+          required: true
   # Phase 2+ 才执行完整质量门禁；MVP 仅保留结构声明。
   qualityGates:
     - type: missing_required_fields
@@ -679,10 +683,11 @@ delivery:
 - `perception.triggers[].sensor` 必须引用已声明 Sensor。
 - `perception.triggers[].signalType` 必须属于对应 Sensor 声明的 `signalTypes`，并与 W2A Signal 的 `event.type` 匹配。
 - `perception.triggers[].routeTo` 必须指向 `workflow.entrypoint` 或未来支持的具名 workflow。
+- `solutionType` 是顶层字段，不放入 `metadata`；`metadata.industry` 仅表示行业标签。
 - 所有组件 ID 必须唯一。
 - `components[].category` 必须是 `processor` 或 `action`。`processor` 表示有明确输入输出的处理组件，`action` 表示执行副作用的动作组件。
 - 所有工作流中的 `component` 引用都必须能解析到已声明组件。
-- `workflow.entrypoint` 必须是 `workflow.nodes` 中某个节点的 `id`（通常为第一个节点）；`routeTo` 必须等于 `workflow.entrypoint`。
+- `workflow.entrypoint` 必须是 `workflow.nodes` 中第一个节点的 `id`；`routeTo` 必须等于 `workflow.entrypoint`。
 - `workflow.onError.fallbackNode` 必须指向 `workflow.nodes[].id`，而不是组件 ID。
 - `workflow.inputMapping` 可选；用于将标准 `RuntimeRequest` 中的字段映射为工作流输入变量。
 - `workflow.inputMapping.chat` 作用于聊天触发，`workflow.inputMapping.w2a_signal` 作用于 W2A Signal 触发。
@@ -698,6 +703,7 @@ delivery:
 - `runtime.embedding` 为 Phase 2+ 能力；MVP 仅使用关键词检索，不依赖向量列或向量索引。若 Phase 1 Manifest 中误填该配置，Validator 只能发出警告并忽略执行。
 - `knowledge.qualityGates[].scope` 可选；不填写时默认作用于全部 Schema，填写时必须引用已声明 Schema。
 - Phase 1 中 `knowledge.schemas[].fields` 仍主要作为结构说明与文档契约，但 `solution run` 必须执行最小 JSONL 记录契约校验：每条记录必须至少包含一个可检索文本字段和一个引用字段，默认引用字段为 `source_ref`。可检索文本字段按优先级从 `answer`、`resolution`、`question`、`symptom`、`cause`、`description`、`content` 中选取第一个非空字段；Manifest 中声明的 Schema 字段（如 `troubleshooting_qa` 的 `symptom/cause/resolution`）与 JSONL 实际字段通过上述优先级规则映射，无需严格同名。完整字段必填校验、冲突检测和 `qualityGates` 执行属于 Phase 2 ingest 流水线。
+- Phase 2 起 `knowledge.schemas[].fields` 支持两种写法：兼容 Phase 1 的字符串字段名，或字段对象 `{name, required}`。`required: true` 是 `missing_required_fields` 的唯一判定依据；未声明 required 的字段不得被该门禁当作阻断项。
 - `delivery.environments[].name` 必须唯一。
 - 环境配置可以通过名称或环境变量引用密钥。MVP 不做启发式密钥猜测，只校验敏感字段是否使用引用格式。
 - 敏感字段必须使用 `env:VAR_NAME` 或后续支持的密钥引用格式，不得包含明文密钥值。Sensor 的 `tokenRef`、`authTokenRef` 等字段也适用该规则。
@@ -712,7 +718,7 @@ delivery:
 - `signal_ingress_reachable` 检查声明的 W2A Signal 入口在目标环境中是否可达。
 - 任意发布目标都必须启用可观测性。
 
-> **Schema 字段约束演进**：当前 Phase 1 中 `knowledge.schemas[].fields` 为扁平字符串列表，仅作结构说明。Phase 2 将引入 `required` 标记（如 `"fieldname: required"` 或子对象 `{"name": "field", "required": true}`），使 `missing_required_fields` 质量门禁有据可依。
+> **Schema 字段约束演进**：当前 Phase 1 中 `knowledge.schemas[].fields` 为扁平字符串列表，仅作结构说明。Phase 2 将引入字段对象 `{"name": "field", "required": true}`；字符串列表继续兼容，但字符串字段默认 `required: false`，使 `missing_required_fields` 质量门禁有明确依据。
 
 ### ManifestValidator 检查清单
 
@@ -795,7 +801,7 @@ MVP 的 Sensor 运行模型固定为“Runtime 内置 Webhook 入口”，避免
 - 外部系统直接向该 endpointPath 发送 W2A 标准 Signal，不需要单独启动 Sensor 进程。
 - Runtime 使用 `authTokenRef` 解析出的密钥校验请求头，例如 `Authorization: Bearer <token>`。
 - Runtime 使用 `schema_version` 对应的预定义 W2A envelope Schema 校验标准字段完整性；官方 SDK 可以作为协议依赖，但平台核心不依赖 W2A 仓库运行时栈。MVP 只接受 `w2a/0.1`，未知版本返回 400、写入拒绝类 Trace，不进入工作流。
-- 通过认证、协议校验和 Signal 类型校验后，Runtime 原样保留 W2A Signal envelope，并交给 `SignalRouter`。
+- 通过认证、协议校验、`signal.source.sensor_id` 来源校验和 Signal 类型校验后，Runtime 原样保留 W2A Signal envelope，并交给 `SignalRouter`。
 - `source_event.schema` 是可选的生产者自描述信息，不作为 MVP 必填字段；SignalRouter 不依赖内联 schema 做协议校验。
 - `signal_id` 在同一环境和同一 Sensor 内作为幂等键；重复 Signal 不得重新执行工作流，必须返回已有结果或等价响应。
 - 统一 `/signals/w2a` 可作为内部标准入口或测试入口；生产对外入口优先使用每个 Sensor 的 `endpointPath`。
@@ -806,7 +812,7 @@ MVP 幂等实现采用进程内 TTL 缓存：
 
 - 幂等键为 `environmentName + sensor_id + signal_id`。
 - 默认 TTL 为 24 小时；超过 TTL 后同一 Signal 可被重新处理。
-- 缓存只保存成功结果与确定性入口拒绝结果（例如认证失败、未知版本、必填字段缺失）；运行时临时失败（例如模型超时、组件异常、网络抖动）不缓存，以便后续重试。重复请求命中缓存时直接返回已缓存结果，并在 Trace 或审计日志中标记为 duplicate。
+- 幂等缓存只在认证、W2A envelope 校验、Sensor 来源校验和 Signal 类型校验通过后查询或写入；认证失败不参与幂等缓存，只写安全审计日志。缓存保存成功结果与确定性入口拒绝结果（例如未知版本、必填字段缺失、inputMapping 缺失）；运行时临时失败（例如模型超时、组件异常、网络抖动）不缓存，以便后续重试。重复请求命中缓存时直接返回已缓存结果，并在 Trace 或审计日志中标记为 duplicate。
 - Runtime 重启后缓存丢失，因此 MVP 幂等只保证单进程生命周期内有效；生产版本应迁移到 Redis 或 PostgreSQL 持久化幂等表。
 
 ### 最小运行序列
@@ -878,6 +884,7 @@ sequenceDiagram
 职责：
 
 - 校验进入 Solution 的 W2A Signal `schema_version`、字段完整性和 `event.type`。
+- 校验 `signal.source.sensor_id` 必须等于当前 endpoint 对应的 Manifest Sensor ID，防止 Signal 来源伪造。
 - 根据 `perception.triggers` 将 Signal 映射到 Workflow 入口。
 - 将标准 W2A Signal 原样封装到统一 Runtime Request。
 - 将 `signal_id`、`event.summary`、`emitted_at` 和路由结果写入 Trace，便于关联和延迟监测。
@@ -1534,7 +1541,15 @@ MVP 响应：
 - 分层 Runtime Context。
 - 最小 `W2ASensorManager` 与 `SignalRouter`，可接收并校验 Webhook 类 W2A 标准 Signal。
 - 最小知识加载器：读取 Manifest 声明的 `type: jsonl` 知识源，生成最小质量报告，构建内存关键词索引，实现 `context.knowledge.Retrieve()`。
-- 通用组件：`llm-classifier`（`registry.intent.support-router@1.0.0`）、`retriever`（`registry.retriever.local-keyword@1.0.0`）、`llm-generator`（`registry.agent.cited-answer@1.0.0`）、`human-handoff`（`registry.action.human-handoff@1.0.0`），prompt 驱动，行为由 Manifest 配置定义。
+- Phase 1 内置组件实例（版本均为 `@1.0.0`）：
+  - `registry.intent.support-router@1.0.0`（通用意图分类器）。
+  - `registry.intent.beverage-router@1.0.0`（饮品场景意图分类器）。
+  - `registry.intent.severity-beverage@1.0.0`（饮品场景严重度判断）。
+  - `registry.retriever.local-keyword@1.0.0`（关键词检索器）。
+  - `registry.agent.cited-answer@1.0.0`（带引用回答生成器）。
+  - `registry.action.human-handoff@1.0.0`（人工升级）。
+  - `registry.action.mock-create-service-ticket@1.0.0`（mock 工单创建）。
+  这些实例仍属于少量通用组件类型的预配置实例，行为由 Manifest 配置定义。
 - `POST /chat` 端点。
 - Manifest 声明的 W2A Webhook 端点，例如 `POST /w2a/tickets`。`POST /signals/w2a` 仅作为可选内部测试入口。
 - 基础 JSON Trace 生成。
@@ -1567,9 +1582,9 @@ MVP 响应：
 - Python Worker 原型：PDF/Word/Markdown → JSONL，CSV/Excel → 标准化表格格式。
 - `RuntimeContext.Model()` 与 `RuntimeContext.HTTP()` 能力实现。
 - 内置方案模板：客服问答、数据查询、告警升级（可直接 `solution run` 的完整 Manifest）。
-- 前端控制台按 `solutionType` 展示不同的配置表单。
+- 前端控制台目录预留；按 `solutionType` 展示配置表单属于 MVP 后续迭代，不进入 Phase 2 交付范围。
 
-### 阶段 3：多模式评测与子工作流
+### 阶段 3：多模式评测与发布门禁
 
 目标周期：1.5 周。
 
@@ -1582,9 +1597,10 @@ MVP 响应：
 - `solution release` 仅执行并检查 `schedule: onRelease` 的门禁；不追溯 `schedule: weekly` 或其他 schedule 的历史失败记录。即使 weekly 门禁曾产生过失败记录，也不会阻断本次 release。
 - 阻断型门禁失败时阻断发布。
 - `schedule: weekly` 门禁声明仅作校验通过；在当前阶段（Phase 3）无内置调度器，weekly 门禁不自动执行。后续调度器实现后，失败只生成监控事件或告警记录，不自动阻断线上服务。
-- 子工作流引擎：节点可引用命名工作流，支持模块化方案组装。
 - 组件间类型流校验：Validator 检查工作流上下游节点的 input/output schema 类型兼容性。
 - Trace 数据可用于评测调试。
+
+子工作流引擎不进入 MVP Phase 3；它属于后续 P2 迭代，在 MVP 中继续通过线性节点序列和受限 `when` 表达复杂度。
 
 ### 阶段 4：交付、组件共享与模板市场
 
@@ -1595,7 +1611,7 @@ MVP 响应：
 - `--env=production` 解析生产配置。
 - 发布检查覆盖模型凭证、Sensor 凭证、action 凭证、Signal 入口可达性、知识质量、评测门禁、可观测性和安全基线。
 - `solution release` 成功时生成 `./deploy/<env>/`，至少包含 `docker-compose.yaml`、`.env.example`、运行说明和重建说明；实现可额外生成 K8s 清单或脚本，但目录契约不得变化。
-- `./deploy/<env>/` 必须是可自包含启动包：包含解析后的 Manifest、必要的知识源和评测数据集，或在生成说明中声明等价卷挂载；所有知识源、评测集路径应在 Manifest 中统一使用相对于 `$SOLUTION_ROOT` 的路径；容器内通过卷挂载保持相同相对结构。`./deploy/<env>/` 仅包含编排文件和运行说明，不复制 Manifest 或不重写路径，以保持 Manifest 的唯一可信源原则。
+- `./deploy/<env>/` 必须是可自包含启动包：包含原始 Manifest 的只读快照、必要的知识源和评测数据集，或在生成说明中声明等价卷挂载；所有知识源、评测集路径应在 Manifest 中统一使用相对于 `$SOLUTION_ROOT` 的路径，容器内通过卷挂载保持相同相对结构。部署包不得重写 Manifest 的业务语义；质量报告和评测缓存的 fingerprint 仍基于源 Manifest 文件内容计算。
 - 若实现 `solution destroy`，只允许删除部署资源和运行时持久化数据（运行日志、临时索引、会话状态）；不删除原始知识源、评测数据集或 Trace 归档；重新 `solution run` 或重新部署时只能从 Manifest、知识源和环境配置重建状态。
 - 同一份 Manifest 从 `poc` 提升到 `production`，无需修改工作流逻辑。
 - `solution component publish`：FDE 将验证过的自定义组件打包发布到团队共享仓库。输出为 `<name>-<version>.tar.gz` 包，包含 `component.yaml` 契约、实现文件和依赖声明；发布目标为 `$SOLUTION_HOME/components/registry/<namespace>/<name>/<version>/`。

@@ -146,7 +146,7 @@
 7. Python Worker 原型：PDF/Word/Markdown -> JSONL，CSV/Excel -> 标准化表格格式
 8. RuntimeContext.Model() 与 RuntimeContext.HTTP() 能力完整实现
 9. 内置方案模板（至少 3 个）：客服问答、数据查询、告警升级
-10. 前端控制台按 solutionType 展示不同配置表单（可选，标记为 Phase 2 前端预留）
+10. 前端控制台目录预留；按 solutionType 展示配置表单不进入 M2，放入 MVP 后续迭代
 
 ### M2 详细任务拆分
 
@@ -181,7 +181,7 @@
 
 **第 4 周验收**：选择平台内置模板，修改知识源路径和配置后 solution run 可拉起不同方案，全程不写组件代码。
 
-### M2 验收标准（对应 MVP 验收标准 8, 14, 16）
+### M2 验收标准（对应 MVP 验收标准 14, 16）
 
 - [ ] solution ingest 命令可用，支持 JSONL 和 Markdown 知识源
 - [ ] missing_required_fields 的 block 语义有效
@@ -293,7 +293,7 @@
 1. --env=production 解析生产配置（模型策略、密钥、trace 路径等覆盖）
 2. 完整 8 项发布检查链路：model_credentials_configured、sensor_credentials_configured、action_credentials_configured、signal_ingress_reachable、knowledge_quality_passed、eval_gates_passed、observability_enabled、security_baseline_passed
 3. solution release 成功时生成 ./deploy/<env>/，含 docker-compose.yaml、.env.example、运行说明和重建说明
-4. docker-compose.yaml 启动同一 Go Runtime 二进制和同一份 Manifest/config
+4. docker-compose.yaml 启动同一 Go Runtime 二进制，并使用源 Manifest 的只读快照或等价卷挂载
 5. solution component publish 命令：FDE 将自定义组件打包发布到团队共享仓库
 6. 方案模板市场：FDE 可发布验证过的方案模板供团队复用
 7. 复用率统计：自动计算新方案中引用已有组件和模板的比例
@@ -330,12 +330,12 @@
 
 **第 7 周前 3 天验收**：solution release 成功生成部署包，docker-compose up 后行为与 solution run 等价；solution component publish 可将组件打包发布。
 
-### M4 验收标准（对应 MVP 验收标准 8-10）
+### M4 验收标准（对应 MVP 验收标准 9-10）
 
 - [ ] solution release 在全部检查通过后生成 ./deploy/<env>/ 部署产物
 - [ ] model_credentials_configured、sensor_credentials_configured、action_credentials_configured、signal_ingress_reachable 在配置缺失时使 release 失败（对应 MVP 验收标准 9）
 - [ ] 增加或选择 production 环境时，只改变环境配置，不改变工作流逻辑（对应 MVP 验收标准 10）
-- [ ] docker-compose.yaml 启动同一个 Runtime 二进制和同一份 Manifest/config，行为与 solution run 等价
+- [ ] docker-compose.yaml 启动同一个 Runtime 二进制，并使用源 Manifest 的只读快照或等价卷挂载，行为与 solution run 等价
 - [ ] 同一份 Manifest 从 poc 提升到 production，无需修改工作流逻辑
 - [ ] solution component publish 输出 <name>-<version>.tar.gz 包
 - [ ] 新品牌 PoC 在一天内完成交付演示，组件复用率 > 80%

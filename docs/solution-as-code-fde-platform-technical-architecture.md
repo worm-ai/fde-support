@@ -302,7 +302,7 @@ release checks
 - `workflow.nodes[].inputs` 与 `when` 不能引用带 `when` 的上游节点输出。
 - `when` 仅支持 `node_id.field` 一层访问。
 - `human_handoff.reason` 是 optional。
-- `knowledge.sources[].type` 在 Phase 1 中直接使用实现格式（如 `jsonl`），等价于语义类型 `document` + 格式 `jsonl`。后续阶段将引入独立的 `format` 字段。`knowledge.schemas[].fields` 在 MVCR 中主要作为结构说明；完整 required 校验属于 Phase 2 ingest，但 Phase 1 `solution run` 必须校验 JSONL 记录的最小契约：至少一个可检索文本字段和引用字段，默认引用字段为 `source_ref`。
+- `knowledge.sources[].type` 在 Phase 1 中直接使用实现格式（如 `jsonl`），等价于语义类型 `document` + 格式 `jsonl`。后续阶段将引入独立的 `format` 字段。`knowledge.schemas[].fields` 在 MVCR 中主要作为结构说明；完整 required 校验属于 Phase 2 ingest，但 Phase 1 `solution run` 必须校验 JSONL 记录的最小契约：至少一个可检索文本字段和引用字段，默认引用字段为 `source_ref`。Phase 2 起 `fields` 支持字段对象 `{name, required}`；`required: true` 是 `missing_required_fields` 的唯一阻断依据。
 - `delivery.environments[].config` 只能覆盖白名单字段。
 
 ### 7.3 Environment Resolver
@@ -351,7 +351,7 @@ W2A 只作为外部世界信号输入。平台实现一个 W2A adapter：
 - 使用 `schema_version` 对应的预定义 schema 校验 W2A 标准 envelope；官方 SDK 可以作为协议依赖，但平台核心不依赖 W2A 仓库运行时栈。
 - 拒绝未知 `schema_version`；MVP 只接受 `w2a/0.1`。
 - 校验 W2A `event.type` 是否在 Manifest `signalTypes` 白名单中；同时校验 `signal.source.sensor_id` 必须等于当前 endpoint 对应的 Manifest Sensor ID。
-- 以 `environment + source.sensor_id + signal_id` 作为幂等键，重复请求不得重复执行 Workflow。幂等缓存仅在认证和 envelope 校验通过后才查询或写入；认证失败的请求不参与幂等缓存。
+- 以 `environment + source.sensor_id + signal_id` 作为幂等键，重复请求不得重复执行 Workflow。幂等缓存仅在认证、envelope 校验、Sensor 来源校验和 Signal 类型校验通过后才查询或写入；认证失败的请求不参与幂等缓存。
 - 将 W2A 标准 envelope 原样放入 `RuntimeRequest.signal`。
 
 RuntimeRequest 保留字段：
@@ -390,7 +390,7 @@ type SignalIdempotencyStore interface {
 }
 ```
 
-MVCR 使用进程内 map + TTL，默认 TTL 24 小时，Runtime 重启后不保证幂等状态保留。生产演进使用 Redis 或 PostgreSQL，并复用同一接口。`IdempotencyRecord` 保存终态响应或入口拒绝结果；重复请求返回已保存结果，并标记 `duplicate: true`。
+MVCR 使用进程内 map + TTL，默认 TTL 24 小时，Runtime 重启后不保证幂等状态保留。生产演进使用 Redis 或 PostgreSQL，并复用同一接口。`IdempotencyRecord` 保存认证、envelope 校验、Sensor 来源校验和 Signal 类型校验通过后的终态响应或确定性入口拒绝结果；认证失败不写入幂等缓存。重复请求返回已保存结果，并标记 `duplicate: true`。
 
 ### 7.5 RuntimeRequest
 
@@ -906,7 +906,8 @@ Release Checker 是同步阻断器。
 
 - `solution release` 成功时生成部署产物目录 `./deploy/<env>/`。
 - 目录内至少包含 `docker-compose.yaml`、`.env.example`、运行说明和重建说明。
-- `docker-compose.yaml` 必须启动同一个 Go Runtime 二进制和同一份解析后的 Manifest/config，不得重新实现一套与 `solution run` 行为不同的服务逻辑。
+- `docker-compose.yaml` 必须启动同一个 Go Runtime 二进制，并使用源 Manifest 的只读快照或等价卷挂载，不得重新实现一套与 `solution run` 行为不同的服务逻辑。
+- 部署包不得重写 Manifest 的业务语义；质量报告和评测缓存的 fingerprint 仍基于源 Manifest 文件内容计算。
 - 实现可额外生成 K8s 清单或脚本，但目录契约不得变化。
 
 ## 13. 部署架构
