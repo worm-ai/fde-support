@@ -254,16 +254,17 @@ cmd/api/cli
 
 ```go
 type SolutionManifest struct {
-    APIVersion string          `yaml:"apiVersion"`
-    Kind       string          `yaml:"kind"`
-    Metadata   MetadataSpec    `yaml:"metadata"`
-    Perception PerceptionSpec  `yaml:"perception"`
-    Knowledge  KnowledgeSpec   `yaml:"knowledge"`
-    Components []ComponentSpec `yaml:"components"`
-    Workflow   WorkflowSpec    `yaml:"workflow"`
-    Runtime    RuntimeSpec     `yaml:"runtime"`
-    Evaluation EvaluationSpec  `yaml:"evaluation"`
-    Delivery   DeliverySpec    `yaml:"delivery"`
+    APIVersion   string          `yaml:"apiVersion"`
+    Kind         string          `yaml:"kind"`
+    Metadata     MetadataSpec    `yaml:"metadata"`
+    Perception   PerceptionSpec  `yaml:"perception"`
+    Knowledge    KnowledgeSpec   `yaml:"knowledge"`
+    Components   []ComponentSpec `yaml:"components"`
+    SolutionType string          `yaml:"solutionType"`
+    Workflow     WorkflowSpec    `yaml:"workflow"`
+    Runtime      RuntimeSpec     `yaml:"runtime"`
+    Evaluation   EvaluationSpec  `yaml:"evaluation"`
+    Delivery     DeliverySpec    `yaml:"delivery"`
 }
 ```
 
@@ -301,7 +302,7 @@ release checks
 - `workflow.nodes[].inputs` 与 `when` 不能引用带 `when` 的上游节点输出。
 - `when` 仅支持 `node_id.field` 一层访问。
 - `human_handoff.reason` 是 optional。
-- `knowledge.schemas[].fields` 在 MVCR 中主要作为结构说明；完整 required 校验属于 Phase 2 ingest，但 Phase 1 `solution run` 必须校验 JSONL 记录的最小契约：至少一个可检索文本字段和引用字段，默认引用字段为 `source_ref`。
+- `knowledge.sources[].type` 在 Phase 1 中直接使用实现格式（如 `jsonl`），等价于语义类型 `document` + 格式 `jsonl`。后续阶段将引入独立的 `format` 字段。`knowledge.schemas[].fields` 在 MVCR 中主要作为结构说明；完整 required 校验属于 Phase 2 ingest，但 Phase 1 `solution run` 必须校验 JSONL 记录的最小契约：至少一个可检索文本字段和引用字段，默认引用字段为 `source_ref`。
 - `delivery.environments[].config` 只能覆盖白名单字段。
 
 ### 7.3 Environment Resolver
@@ -458,7 +459,7 @@ WorkflowExecutor 结束后按确定性规则组装响应：
 2. `intent` 和 `confidence` 取自第一个成功返回这两个字段的 processor 节点。
 3. `answer` 取自最后一个成功返回 `answer` 的 processor 节点。
 4. `citations` 优先取 `answer` 来源节点的 `citations`；若缺失则回退到最近的 retriever 输出。
-5. `actions` 按执行顺序收集所有已执行 action 节点输出；soft failure action 也进入 `actions`，并保留 `status: failed` 与 `error`。
+5. `actions` 按执行顺序收集所有已执行 action 节点输出；soft failure action 的输出被原样收集（如 `{"status": "failed", ...}`），平台不额外注入 `error` 字段。
 6. hard failure 时不组装正常业务响应，只返回错误响应和 Trace。
 
 ### 7.8 Component Runtime
@@ -477,11 +478,11 @@ type Component interface {
 
 - 必须是一层 JSON object。
 - processor 组件返回业务输出，供后续节点和 Trace 使用。
-- action 组件必须返回结构化输出；`status=error` 视为硬失败，`status=failed` 视为软失败，是否中断由节点策略决定。
+- processor 组件通过返回值 `(nil, error)` 表达不可恢复的系统异常；action 组件的系统异常同样通过 `(nil, error)` 返回，可恢复的业务失败通过 `output["status"] = "failed"` 表达。任何组件不得使用 `"error"` 作为 status 值。
 
 Action 节点策略：
 
-- 默认 `continueOnFailure: false`，表示 action 返回 `status=failed` 时按硬失败处理。
+- 默认 `continueOnFailure: false`，表示 action 通过 `(nil, error)` 返回系统异常或 `output["status"] = "failed"` 时按硬失败处理。
 - 如需允许软失败继续，必须显式配置 `continueOnFailure: true`。
 - `processor` 节点始终硬失败，不能配置 `continueOnFailure`。
 
@@ -489,14 +490,18 @@ Go 接口：
 
 ```go
 type RuntimeContext interface {
+    // Phase 1 可用
     Env() ReadOnlyEnv
     Trace() TraceSink
-    Model() ModelGateway
-    Knowledge() KnowledgeReader
+    Knowledge() KnowledgeReader          // Retrieve() 知识检索
     Actions() ActionSummaryReader
-    Logger() Logger
+    Logger() Logger                      // 结构化日志（Phase 1 提供基本实现）
     Request() RequestMetadata
-    Error() *RuntimeErrorSummary
+    Error() *RuntimeErrorSummary         // fallback 模式下可读的错误上下文
+    // Phase 1 可用（模型调用）
+    Model() ModelGateway                 // LLM 调用（Phase 1 提供基于环境密钥的最小实现）
+    // Phase 2 可用
+    // HTTP() HTTPCaller                 // 外部 API 调用
 }
 
 type ActionSummaryReader interface {
@@ -509,20 +514,22 @@ type ActionSummaryReader interface {
 - `Env()` 只暴露环境解析后的只读配置。
 - `Trace()` 只允许写 span 和字段。
 - `Model()` 只暴露模型调用能力。
-- `Knowledge()` 只暴露检索能力。
+- `Knowledge()` 只暴露检索能力（`Retrieve(ctx, query, topK) → KnowledgeResult`），Phase 1 实现关键词检索。
 - `Logger()` 只允许结构化日志和脱敏。
 - `Request()` 提供 trigger、signal、raw payload 等请求元数据。
 - `Error()` 仅在 fallback 模式下可读。
 - `Actions()` 只读返回已完成 action 的结构化摘要；它只用于后续节点读取执行结果，不改变控制流，不回写 action 状态。
 - `human_handoff` 在 fallback 模式下必须读取 `Error()`，并将 `failedNode`、`type`、`message` 写入 action 输出和 Trace。
 
-内置 MVCR 组件：
+内置 MVCR 组件（Phase 1，版本均为 `@1.0.0`）：
 
-- `intent.support-router`
-- `retriever.local-keyword`
-- `agent.cited-answer`
-- `action.human-handoff`
-- `action.mock-create-service-ticket`
+- `llm-classifier` — `registry.intent.support-router@1.0.0`（通用意图分类器）
+- `llm-classifier` — `registry.intent.beverage-router@1.0.0`（饮品场景意图分类器）
+- `llm-classifier` — `registry.intent.severity-beverage@1.0.0`（饮品场景严重度判断）
+- `retriever` — `registry.retriever.local-keyword@1.0.0`（关键词检索器）
+- `llm-generator` — `registry.agent.cited-answer@1.0.0`（带引用回答生成器）
+- `human-handoff` — `registry.action.human-handoff@1.0.0`（人工升级）
+- `mock action` — `registry.action.mock-create-service-ticket@1.0.0`（mock 工单创建）
 
 ### 7.9 Component Registry
 
@@ -811,12 +818,15 @@ solution validate manifest.yaml --json
 
 ### 10.1 MVCR 本地存储
 
+MVCR 使用 Manifest 所在目录下的 `data/<env>/` 作为本地存储根目录，与设计文档和用户故事示例中的路径约定一致：
+
 ```text
-.solution/
-  traces/
-  reports/
-  indexes/
-  releases/
+data/
+  <env>/
+    traces/
+    reports/
+    indexes/
+    releases/
 ```
 
 适合：
@@ -910,7 +920,7 @@ solution run manifest.yaml --env=poc
 
 - HTTP Server。
 - Workflow Runtime。
-- 内置组件。
+- 内置组件：`llm-classifier`（`registry.intent.support-router@1.0.0`、`registry.intent.beverage-router@1.0.0`、`registry.intent.severity-beverage@1.0.0`）、`retriever`（`registry.retriever.local-keyword@1.0.0`）、`llm-generator`（`registry.agent.cited-answer@1.0.0`）、`human-handoff`（`registry.action.human-handoff@1.0.0`）、mock action（`registry.action.mock-create-service-ticket@1.0.0`）。
 - JSONL Knowledge index。
 - Trace file writer。
 
@@ -1137,7 +1147,7 @@ steps:
 - Environment Resolver。
 - HTTP `/chat`、`/health`、`endpointPath`。
 - WorkflowExecutor。
-- 内置组件。
+- 内置组件：`llm-classifier`（`registry.intent.support-router@1.0.0`、`registry.intent.beverage-router@1.0.0`、`registry.intent.severity-beverage@1.0.0`）、`retriever`（`registry.retriever.local-keyword@1.0.0`）、`llm-generator`（`registry.agent.cited-answer@1.0.0`）、`human-handoff`（`registry.action.human-handoff@1.0.0`）、mock action（`registry.action.mock-create-service-ticket@1.0.0`）。
 - JSONL KnowledgeLoader。
 - SensorRegistry。
 - SignalIdempotencyStore。

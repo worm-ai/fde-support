@@ -9,13 +9,18 @@
 - 所有 Manifest 示例必须能通过 `solution validate`，不能引用未声明的组件、节点、知识源、Sensor 或环境。
 - 所有敏感配置必须使用 `env:VAR_NAME` 或后续支持的密钥引用格式，不能在 Manifest 中写明文密钥。
 - Chat 与 W2A Signal 触发路径必须先归一化为标准 `RuntimeRequest`，再进入同一个 WorkflowExecutor。
+- `workflow.entrypoint` 必须是 `workflow.nodes` 中第一个节点的 `id`；`perception.triggers[].routeTo` 必须等于 `workflow.entrypoint`。
 - `workflow.inputMapping` 在 MVP 中只支持简单字段路径；必填映射字段缺失时，SignalRouter 返回 400，不进入工作流，也不触发 fallback。
 - 工作流节点必须通过 `workflow.nodes[].inputs` 显式声明组件输入；组件不能隐式读取整个 `step_outputs`。
+- 组件不可恢复的系统异常必须通过返回值 `(nil, error)` 抛出；action 组件的可恢复业务失败通过 `output["status"] = "failed"` 表达，禁止使用 `"error"` 作为 status 值。processor 组件的输出不包含 `status` 字段。
 - MVP 中的 W2A Sensor 采用 Runtime 内置 Webhook 入口模型：Runtime 根据 `perception.sensors[].config.endpointPath` 暴露 HTTP 入口并校验认证；独立 Sensor 进程或 SensorHub 集成属于后续能力。
 - `@world2agent/sensor-webhook@1.0.0` 是 MVP `SensorRegistry` 的内置 Sensor 引用，不要求从 npm 安装，也不通过 `ComponentRegistry` 解析；版本必须显式 pin。
+- `RuntimeContext.Model()` 在 Phase 1 提供基于环境密钥的最小模型网关实现（如调用 OpenAI API）；`HTTP()` 能力在 Phase 2 可用。
 - W2A Sensor 只负责把外部事件标准化为 W2A Signal，不负责业务决策、工作流编排、RAG、动作执行或发布治理。
-- Phase 1 只验证 Runtime 内核、统一组件接口、mock action、Trace、W2A Signal 入口和启动时 JSONL 知识加载；真实知识摄取流水线、真实外部系统调用、知识工作台和增量索引不进入 Phase 1。
+- Phase 1 只验证 Runtime 内核、统一组件接口（含 `llm-classifier`、`retriever`、`llm-generator`、`human-handoff`）、mock action、Trace、W2A Signal 入口和启动时 JSONL 知识加载；真实知识摄取流水线、真实外部系统调用、知识工作台和增量索引不进入 Phase 1。
 - Phase 1 检索组件统一使用 `registry.retriever.local-keyword@1.0.0`；混合检索和向量检索属于 Phase 2+。
+- Manifest 中引用的组件版本号必须与平台内置注册表中已注册的版本一致；Phase 1 内置组件版本均为 `@1.0.0`。
+- 所有组件的 citations 统一使用 `string[]` 格式（`"source#ref"`），由知识加载时统一生成该格式的引用字符串。
 - `knowledge.sources[].uri`、`evaluation.datasets[].uri` 等相对路径均以 Manifest 文件所在目录为基准解析。
 - `sessionId` 在 MVP 中仅用于请求关联，不提供跨轮会话记忆。
 
@@ -94,13 +99,14 @@
 **核心 Manifest 片段（初次 PoC）**
 
 ```yaml
-apiVersion: solution.ai/v1alpha1
+apiVersion: solution.codex/v1
 kind: Solution
 metadata:
   name: lecharm-support-agent
   version: 0.1.0
   owner: fde-zhouyuan
   industry: beverage
+  solutionType: customer-support
 
 knowledge:
   sources:
@@ -131,18 +137,18 @@ components:
       requireCitation: true
   - id: answer_generator
     category: processor
-    ref: registry.agent.cited-answer@1.2.0
+    ref: registry.agent.cited-answer@1.0.0
     config:
       style: concise
       requireGrounding: true
   - id: human_handoff
     category: action
-    ref: registry.action.mock-human-handoff@1.0.0
+    ref: registry.action.human-handoff@1.0.0
     config:
       queue: support-l2
 
 workflow:
-  entrypoint: support_agent
+  entrypoint: classify_intent
   onError:
     retry: 1
     fallbackNode: handoff
@@ -235,7 +241,7 @@ delivery:
 
 **完成定义**
 
-- [ ] Golden Case 的 JSONL 格式文档已提供，并支持 `runtime_request_jsonl` 输入模型
+- [ ] Golden Case 的 JSONL 格式文档已提供，并支持 `runtime_request_jsonl` 输入模型；Golden Case 中的 `expected.intent` 必须在组件声明的 `intents` 列表内
 - [ ] `solution evaluate` 命令在 Phase 3 可用，输出结果可读，且 `--json` 提供 `warnings` 与 `warnings_exist`
 - [ ] 门禁阻断功能有效，未通过时禁止后续流程
 - [ ] 评测结果与 Trace 数据关联，可下钻分析
@@ -357,7 +363,7 @@ perception:
     - id: ticket_triage
       sensor: ticket_webhook
       signalType: ticket.created
-      routeTo: support_agent
+      routeTo: classify_intent
 
 workflow:
   inputMapping:
@@ -409,12 +415,14 @@ workflow:
 
 **完成定义**
 
-- [ ] `severity_check` 和 mock `create_ticket` 组件已在本地注册表中注册并可引用
+- [ ] `severity_check`（`registry.intent.severity-beverage@1.0.0`）和 mock `create_ticket`（`registry.action.mock-create-service-ticket@1.0.0`）组件已在平台内置注册表中注册并可引用；两者均为 Phase 1 平台内置组件，无需 FDE 按 Component SDK 自定义实现
 - [ ] 组件按条件正确触发/跳过，action 返回结构化输出
 - [ ] action 的调用参数和返回结果完整记录在 Trace 中
 - [ ] 默认 action 失败会阻断工作流；只有显式配置 `continueOnFailure: true` 的节点才允许失败后继续
 
 **Manifest 新增组件及工作流节点**
+
+> 以下仅展示新增部分；`human_handoff`、`intent_classifier`、`retriever`、`answer_generator` 等已有组件和工作流节点保持不变。
 
 ```yaml
 components:
@@ -587,15 +595,16 @@ delivery:
 - [ ] `conflicting_answers` 的 warn 语义有效
 - [ ] 质量报告可被 `knowledge_quality_passed` release check 消费
 
-**Manifest 中的知识质量门禁**
+**Manifest 中的知识质量门禁（`knowledge` 段下新增）**
 ```yaml
-qualityGates:
-  - type: missing_required_fields
-    severity: block
-    scope: [faq]
-  - type: conflicting_answers
-    severity: warn
-    scope: [faq]
+knowledge:
+  qualityGates:
+    - type: missing_required_fields
+      severity: block
+      scope: [faq]
+    - type: conflicting_answers
+      severity: warn
+      scope: [faq]
 ```
 
 ---
@@ -716,13 +725,14 @@ evaluation:
 以下是 STORY-001 至 STORY-004 整合后的 Manifest 完整版，供实现参考：
 
 ```yaml
-apiVersion: solution.ai/v1alpha1
+apiVersion: solution.codex/v1
 kind: Solution
 metadata:
   name: lecharm-support-agent
   version: 0.1.0
   owner: fde-zhouyuan
   industry: beverage
+  solutionType: customer-support
 
 perception:
   sensors:
@@ -736,7 +746,7 @@ perception:
     - id: ticket_triage
       sensor: ticket_webhook
       signalType: ticket.created
-      routeTo: support_agent
+      routeTo: classify_intent
 
 knowledge:
   sources:
@@ -771,7 +781,7 @@ components:
       criticalKeywords: ["呕吐", "医疗", "中毒", "玻璃"]
   - id: answer_generator
     category: processor
-    ref: registry.agent.cited-answer@1.2.0
+    ref: registry.agent.cited-answer@1.0.0
     config:
       style: concise
       requireGrounding: true
@@ -788,7 +798,7 @@ components:
       queue: support-l2
 
 workflow:
-  entrypoint: support_agent
+  entrypoint: classify_intent
   onError:
     retry: 1
     fallbackNode: handoff
