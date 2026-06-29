@@ -144,6 +144,10 @@ flowchart TD
 - V1：Go API/Runtime + PostgreSQL + MinIO + Redis + Python Worker。
 - V2：Runtime、Knowledge Worker、Evaluation Worker、Control Plane 拆分部署。
 
+范围说明：本架构文档会描述 V1/V2 的演进目标，但 M1/MVCR 的实现边界仍以详细设计的 Phase 1 为准：单个 Go Runtime、本地文件、内存关键词索引、JSON Trace 文件和进程内幂等。PostgreSQL、pgvector、MinIO、Redis、Python Worker、OpenTelemetry Collector 等均为 Phase 2+ 或生产演进能力，未在具体里程碑标注前不得进入 M1 任务范围。
+
+MVCR 部署约束：M1 只承诺单实例语义。横向多实例部署时，进程内幂等缓存、Trace 文件、质量报告和内存知识索引都可能分叉；必须引入共享 Redis/PostgreSQL 幂等存储、共享 Trace/报告存储和原子知识发布机制后，才能声明生产级多实例一致性。
+
 ## 5. 推荐仓库结构
 
 平台应使用独立仓库，例如：
@@ -205,6 +209,25 @@ solution-platform/
 - `cmd/solution` 和 `cmd/solution-server` 可以复用 `internal/app`。
 - `workers/` 可以先为空，等 Phase 2/3 再引入 Python Worker。
 - `web/console` 不进入 MVCR 范围，但目录预留。
+
+设计模块到代码模块映射：
+
+| 详细设计模块 | 建议代码模块 | 说明 |
+|--------------|--------------|------|
+| Manifest | `internal/manifest` | 类型定义、加载、默认值、校验、版本兼容 |
+| Environment | `internal/environment` | 环境解析、覆盖白名单、密钥引用校验 |
+| Runtime / App | `internal/app`、`internal/api` | CLI/HTTP 启动、运行时装配、入口路由 |
+| Workflow | `internal/workflow` | 线性执行、`when`、输入映射、fallback、retry |
+| Component / RuntimeContext | `internal/component`、`pkg/componentapi` | 组件接口、内置组件、运行时能力注入 |
+| Component Registry | `internal/registry` | 内置 map、方案级发现、后续本地/远程注册表 |
+| Knowledge | `internal/knowledge` | JSONL loader、内存索引、质量报告、Phase 2 ingest |
+| Evaluation | `internal/evaluation` | golden case、指标计算、评测缓存 |
+| Release | `internal/release` | 发布检查、门禁、fingerprint |
+| W2A / Sensor | `internal/w2a` | Signal 校验、Sensor 路由、幂等 |
+| Trace | `internal/trace` | TraceWriter、TraceReader、脱敏规则 |
+| Model | `internal/model` | 模型网关、模型策略、用量统计 |
+| Security | `internal/security` | 密钥引用、脱敏、PII/prompt injection 检查 |
+| Delivery / Storage | `internal/delivery`、`internal/storage` | 部署包、持久化抽象、Phase 2+ 存储适配 |
 
 ## 6. 分层依赖规则
 
@@ -539,13 +562,13 @@ type ActionSummaryReader interface {
 registry.<namespace>.<name>@<semver>
 ```
 
-本地目录：
+本地目录（Phase 2 完整本地注册表布局）：
 
 ```text
 components/registry/<namespace>/<name>/<version>/component.yaml
 ```
 
-MVCR 可用内置 map 实现，但接口必须按 registry 设计：
+M1/MVCR 最小实现使用内置 map，并可扫描方案目录下的自定义组件；不要求实现完整 `components/registry/<namespace>/<name>/<version>/` 目录规范、组件发布命令或远程市场。Phase 2 起再补齐上述本地注册表布局和组件元数据管理。无论阶段如何，代码接口必须按 registry 设计：
 
 ```go
 type ComponentRegistry interface {
@@ -582,6 +605,7 @@ Phase 1：
 - `context.knowledge.retrieve(query, topK)`。
 - 每条非空 JSONL 记录必须至少包含一个可检索文本字段和引用字段，默认引用字段为 `source_ref`。
 - 文件缺失、JSONL 解析失败、非空记录缺少可检索文本字段或引用字段属于 block，必须终止 `solution run` 启动；记录数为 0 属于 warning。
+- 知识索引与质量报告生成必须先写入临时目录/临时文件，全部成功后再原子替换可见结果；失败时保留上一份可用索引和报告。
 
 Phase 2+：
 
@@ -596,6 +620,7 @@ Go/Python 边界：
 - Phase 2 的 `solution ingest` 仍由 Go CLI 编排；当知识源是 PDF、Word、图片或 Markdown 等重文档时，Go 调用 Python Worker 生成标准 JSONL 中间产物。
 - Go ingest 读取 Python 输出的 JSONL，执行 Schema 门禁、质量报告生成和 PostgreSQL 写入。
 - Python Worker 可部署为本地子进程、独立容器或 Kubernetes Job，但接口先保持“输入文件/目录 -> 输出 JSONL + worker report”，不引入 gRPC 作为第一版强依赖。
+- Phase 2 ingest 的 PostgreSQL 写入、索引切换和质量报告更新必须保持事务性或等价原子性，避免 release 读取半更新知识状态。
 
 embedding 配置：
 
@@ -759,13 +784,14 @@ Content-Type: application/json
 
 - 返回 401。
 - 不进入 WorkflowExecutor。
-- 写安全审计日志。
+- 若请求命中已声明的 Sensor endpoint，写拒绝类 Trace；无法归属到任何 Solution/Sensor 的未知路径或扫描流量只写平台安全审计日志。
+- Trace 和审计日志不得写入 token 值。
 
 Signal 类型不匹配：
 
 - 返回 400。
 - 不进入 WorkflowExecutor。
-- 写拒绝类 Trace 或审计日志。
+- 写拒绝类 Trace。
 
 ## 9. CLI 规范
 
@@ -899,15 +925,15 @@ Release Checker 是同步阻断器。
 - 输出 machine-readable report。
 - 所有检查必须可单测。
 - `action_credentials_configured` 检查 action 组件配置中的 `apiKeyRef`、`tokenRef`、`secretRef` 等敏感引用是否存在且非空。
-- `knowledge_quality_passed` 按以下顺序查找质量报告 — 1) 当前环境 `tracePath` 下最近一次 `solution run` 或 `solution ingest` 生成的质量报告；2) 如不存在，`solution release` 自行执行一次知识加载和质量门禁检查并生成报告。报告 Manifest fingerprint（基于原始 Manifest 文件内容计算）或知识源 fingerprint 不匹配、超过 24 小时或存在 block 项都失败。报告写入必须先落到临时文件，再原子 rename 到最终路径。
-- `eval_gates_passed` 现场执行 `schedule: onRelease` 且 `severity: block` 的评测门禁，或在 fingerprint 匹配且未过期（默认 1 小时）时复用缓存；`schedule: weekly` 只产生告警和报告，不影响 `solution release` 成功退出。
+- `knowledge_quality_passed` 按以下顺序查找质量报告 — 1) 当前环境 `tracePath` 下最近一次 `solution run` 或 `solution ingest` 生成的质量报告；2) 如不存在，`solution release` 自行执行一次知识加载和质量门禁检查并生成报告。报告必须绑定 `manifest_fingerprint`、`knowledge_config_fingerprint` 和 `knowledge_sources_fingerprint`；任一指纹不匹配、超过 24 小时或存在 block 项都失败。报告写入必须先落到临时文件，再原子 rename 到最终路径。
+- `eval_gates_passed` 现场执行 `schedule: onRelease` 且 `severity: block` 的评测门禁，或在缓存的 `execution_fingerprint`、`dataset_fingerprint` 匹配且未过期（默认 1 小时）时复用缓存。`execution_fingerprint` 必须包含影响执行结果的环境覆盖字段，例如 `defaultModel`、`fallbackModel`、`maxLatencyMs`、模型供应商 endpoint、知识绑定和组件配置；`tracePath`、`retainDays` 等非执行字段不进入该指纹。`schedule: weekly` 只产生告警和报告，不影响 `solution release` 成功退出。
 
 成功产物：
 
 - `solution release` 成功时生成部署产物目录 `./deploy/<env>/`。
 - 目录内至少包含 `docker-compose.yaml`、`.env.example`、运行说明和重建说明。
 - `docker-compose.yaml` 必须启动同一个 Go Runtime 二进制，并使用源 Manifest 的只读快照或等价卷挂载，不得重新实现一套与 `solution run` 行为不同的服务逻辑。
-- 部署包不得重写 Manifest 的业务语义；质量报告和评测缓存的 fingerprint 仍基于源 Manifest 文件内容计算。
+- 部署包不得重写 Manifest 的业务语义；质量报告的 `manifest_fingerprint` 仍基于源 Manifest 文件内容计算，评测缓存使用源 Manifest 与执行性环境覆盖共同计算的 `execution_fingerprint`。
 - 实现可额外生成 K8s 清单或脚本，但目录契约不得变化。
 
 ## 13. 部署架构

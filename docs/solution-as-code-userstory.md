@@ -83,7 +83,7 @@
 3. **边界场景：知识源文件为空**
    - Given 声明的 JSONL 知识源文件存在但没有任何知识单元
    - When 执行 `solution run`
-   - Then 服务可启动，但回答问题时应返回“当前知识库为空”的降级提示，并写入 Trace，而非报错崩溃
+   - Then 服务可启动，但回答问题时应返回受控降级响应或空引用结果，并写入 Trace，而非报错崩溃
 
 4. **异常场景：知识单元缺少引用字段**
    - Given JSONL 知识源中某条非空记录缺少默认引用字段 `source_ref`
@@ -600,6 +600,9 @@ delivery:
 - [ ] 质量报告可被 `knowledge_quality_passed` release check 消费
 
 **Manifest 中的知识质量门禁（`knowledge` 段下新增）**
+
+说明：以下 `{name, required}` 字段对象语法属于 Phase 2 `solution ingest` 能力。Phase 1 的 `knowledge.schemas[].fields` 仍按字符串字段列表或结构说明处理，不执行完整 `required: true` 门禁；Phase 1 只校验 JSONL 记录至少包含一个可检索文本字段和引用字段。
+
 ```yaml
 knowledge:
   schemas:

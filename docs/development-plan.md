@@ -45,6 +45,7 @@
 1. Go CLI 二进制 solution，含 validate 和 run 子命令
 2. Manifest Loader：YAML 解析 -> 强类型 Go struct，保留源位置信息
 3. Manifest Validator：分阶段校验（结构->唯一ID->交叉引用->密钥引用->工作流语法->数据流->组件契约->知识 Schema）
+   - 工作流数据流校验必须包含“可跳过依赖”规则：任何节点的 `inputs` 或 `when` 引用了带 `when` 的上游节点，或引用了传递依赖中可能被跳过的节点，`solution validate` 必须失败。
 4. Environment Resolver：--env 选择环境，解析 env:VAR_NAME，应用覆盖白名单
 5. Component 接口 + RuntimeContext 接口稳定化（含 Knowledge()、Model()、Logger() 能力入口）
 6. Component Registry 框架：内置组件 map，方案级自定义组件发现（components/ 目录扫描 + component.yaml 加载）
@@ -60,7 +61,7 @@
     - `registry.agent.cited-answer@1.0.0`（带引用回答生成器）
     - `registry.action.human-handoff@1.0.0`（人工升级）
     - `registry.action.mock-create-service-ticket@1.0.0`（mock 工单创建）
-12. JSON Trace Writer：每次请求一个 Trace，每个节点一个 span
+12. JSON Trace Writer：每次请求一个 Trace，每个节点一个 span；入口拒绝、运行时失败和正常链路均使用同一 Trace Schema
 13. 售后助手示例 Manifest + JSONL 知识源 + W2A webhook 入口 + JSON Trace
 ### M1 详细任务拆分
 
@@ -74,8 +75,9 @@
 | T1.4 | 实现 Manifest Validator 框架 + 结构校验 + 唯一 ID 校验 | 1d | internal/manifest/validator.go，错误格式统一 | T1.2, T1.3 |
 | T1.5 | 实现交叉引用校验（组件引用、工作流节点引用、知识源引用） | 0.5d | Validator 第二阶段 | T1.4 |
 | T1.6 | 实现密钥引用校验 + 工作流语法/数据流校验 | 0.5d | Validator 第三、四阶段 | T1.4 |
-| T1.7 | 定义 Component 接口 + RuntimeContext 接口 | 0.5d | internal/component/component.go，internal/component/context.go | T1.1 |
-| T1.8 | 定义 Workflow 相关类型（节点、when、inputMapping） | 0.5d | internal/workflow/types.go | T1.2 |
+| T1.7 | 实现工作流可跳过依赖校验 | 0.5d | validator_dataflow.go，覆盖 `inputs`/`when` 引用带 `when` 的上游或传递可跳过依赖 | T1.5, T1.6 |
+| T1.8 | 定义 Component 接口 + RuntimeContext 接口 | 0.5d | internal/component/component.go，internal/component/context.go | T1.1 |
+| T1.9 | 定义 Workflow 相关类型（节点、when、inputMapping） | 0.5d | internal/workflow/types.go | T1.2 |
 
 **第 1 周验收**：solution validate 可对 Manifest 执行完整校验，覆盖结构、引用、工作流数据流三类错误。
 
@@ -84,14 +86,14 @@
 | 编号 | 任务 | 估时 | 产出 | 依赖 |
 |------|------|------|------|------|
 | T2.1 | 实现 Environment Resolver | 0.5d | internal/environment/resolver.go | T1.2 |
-| T2.2 | 实现 Component Registry（内置 map + 方案级发现） | 0.5d | internal/registry/registry.go | T1.7 |
-| T2.3 | 实现 7 个内置组件 | 2d | internal/component/builtin/ 下各组件文件 | T1.7, T2.2 |
-| T2.4 | 实现 WorkflowExecutor（线性执行、when、continueOnFailure、fallback、retry） | 1.5d | internal/workflow/executor.go | T1.8, T2.3 |
+| T2.2 | 实现 Component Registry（内置 map + 方案级发现） | 0.5d | internal/registry/registry.go | T1.8 |
+| T2.3 | 实现 7 个内置组件 | 2d | internal/component/builtin/ 下各组件文件 | T1.8, T2.2 |
+| T2.4 | 实现 WorkflowExecutor（线性执行、when、continueOnFailure、fallback、retry） | 1.5d | internal/workflow/executor.go | T1.9, T2.3 |
 | T2.5 | 实现 JSONL Knowledge Loader + 内存关键词索引 + 质量报告 | 1d | internal/knowledge/loader.go，internal/knowledge/index.go | T1.2 |
 | T2.6 | 实现 Model Gateway（OpenAI-compatible adapter + mock provider） | 0.5d | internal/model/gateway.go | T1.1 |
-| T2.7 | 实现 W2A SignalRouter（Sensor 解析、Signal 校验、认证、幂等） | 1d | internal/w2a/router.go，internal/w2a/idempotency.go | T1.2 |
-| T2.8 | 实现 HTTP Server（/health、/chat、动态 endpointPath） | 0.5d | internal/api/server.go | T2.4, T2.7 |
-| T2.9 | 实现 JSON Trace Writer | 0.5d | internal/trace/writer.go | T1.1 |
+| T2.7 | 实现 W2A SignalRouter（Sensor 解析、Signal 校验、认证、幂等） | 1d | internal/w2a/router.go，internal/w2a/idempotency.go；幂等缓存只保存成功结果和确定性入口拒绝结果，不缓存模型超时、组件异常、网络抖动等临时运行失败；默认 TTL 24 小时 | T1.2 |
+| T2.8 | 实现 HTTP Server（/health、/chat、动态 endpointPath） | 0.5d | internal/api/server.go；命中已声明 API/Sensor endpoint 的入口拒绝必须生成拒绝类 Trace，无法归属到 Solution/Sensor 的未知路径或扫描流量只写安全审计日志 | T2.4, T2.7 |
+| T2.9 | 实现 JSON Trace Writer | 0.5d | internal/trace/writer.go；覆盖 `success`、`rejected`、`failed` 三类 Trace，错误字段结构化并统一脱敏 | T1.1 |
 | T2.10 | 实现 Response Mapping（answer/intent/confidence/citations/actions 组装） | 0.5d | internal/api/response.go | T2.4 |
 | T2.11 | 编写售后助手示例 Manifest + JSONL 知识源 | 0.5d | examples/after-sales-support/ | T2.4, T2.5 |
 | T2.12 | 端到端联调 + Bug 修复 | 1d | 全链路跑通 | 以上全部 |
@@ -107,9 +109,11 @@
 - [ ] workflow.inputMapping 可将 signal.source_event.data.description 映射为工作流输入 message
 - [ ] 删除运行态数据后重新运行，可重建相同状态
 - [ ] 每次请求生成一条完整 JSON Trace
+- [ ] 命中已声明 API/Sensor endpoint 的入口拒绝（认证失败、未知 W2A 版本、未授权 Signal 类型、inputMapping 缺失、请求 Schema 错误）生成拒绝类 Trace；无法归属到 Solution/Sensor 的未知路径或扫描流量只写安全审计日志，且不得写入 token 值
 - [ ] Manifest 和 Trace 中不存储明文密钥
 - [ ] when 条件只能通过 node_id.field 访问上游节点输出，隐式变量引用被校验拒绝
 - [ ] 引用可能被跳过节点输出的 workflow.nodes[].inputs 在 solution validate 时失败
+- [ ] action 幂等缓存只保存成功结果和确定性入口拒绝结果，不缓存运行时临时失败
 - [ ] FDE 按 Component SDK 规范编写的自定义组件可被自动发现、加载和校验
 
 ### M1 风险与缓解
@@ -120,6 +124,12 @@
 | 7 个内置组件开发量大 | 加班或裁剪 | 优先保证 classifier + retriever + generator + handoff 四个核心组件 |
 | Model Gateway 依赖外部 API 不稳定 | 测试阻塞 | 内置 mock provider，CI 不依赖外部模型供应商 |
 | W2A Signal 协议细节理解偏差 | 集成返工 | 严格参照设计文档中的 W2A envelope 示例实现，编写 fixture 驱动 |
+| 可跳过依赖校验被简化 | 运行时引用未执行节点，导致 fallback/when 行为不确定 | 单列 T1.7，fixture 覆盖 `inputs` 和 `when` 引用带 `when` 上游、传递可跳过依赖、后置节点 |
+| 环境覆盖白名单失控 | 不同环境改变业务逻辑，release fingerprint 失效 | Environment Resolver 只允许详细设计白名单字段，新增字段必须更新 Validator、fingerprint 和迁移说明 |
+| 拒绝类 Trace 遗漏 | 安全审计和问题排查缺关键链路 | T2.8/T2.9 将 `rejected` Trace 纳入同一 Schema；命中已声明 API/Sensor endpoint 的认证失败也写拒绝类 Trace |
+| 幂等缓存误缓存临时失败 | 模型超时或组件异常被固化，重试永远失败 | T2.7 明确只缓存成功结果和确定性入口拒绝结果，不缓存运行时临时失败 |
+| 工作流语言过早膨胀 | Validator 与 Trace 语义失控 | M1 只支持单层比较表达式，不支持逻辑组合、函数、数组索引和同条件分支等价证明 |
+| 组件质量无保障 | 被复用组件破坏方案稳定性 | 组件必须声明 input/output/config schema，M1 内置组件提供契约测试，M2 起补充组件元数据和兼容性测试 |
 
 ---
 
@@ -221,7 +231,7 @@
 2. Golden Cases 支持 runtime_request_jsonl 格式，覆盖 Chat 触发和 W2A Signal 触发
 3. 评测指标按 solutionType 区分：问答用 citation_coverage + answer_accuracy，查询用 result_accuracy，告警用 escalation_precision
 4. 评测指标可注册：每种方案类型自带默认指标集
-5. solution release 的 eval_gates_passed 检查：现场执行 schedule: onRelease 且 severity: block 的门禁
+5. solution release 的 eval_gates_passed 检查：现场执行 schedule: onRelease 且 severity: block 的门禁；仅在 `execution_fingerprint` 与 `dataset_fingerprint` 匹配且未过期时复用缓存
 6. 门禁阻断功能：block 失败退出码 1，warn 失败退出码 0 但输出告警
 7. 组件间类型流校验：Validator 检查工作流上下游节点的 input/output schema 类型兼容性（原第8项上移）
 
@@ -250,7 +260,7 @@
 |------|------|------|------|------|
 | T6.1 | 评测引擎优化与 Bug 修复（缓冲任务） | 1d | 评测链路稳定性加固 | T5.2-T5.8 |
 | T6.2 | 实现组件间类型流校验（Validator 扩展） | 1d | internal/manifest/validator_dataflow.go | M1 T1.4, T5.5 |
-| T6.3 | solution release 集成 eval_gates_passed 检查 | 0.5d | internal/release/checker.go | T5.7 |
+| T6.3 | solution release 集成 eval_gates_passed 检查 | 0.5d | internal/release/checker.go；缓存键包含 solution、environment、`execution_fingerprint`、`dataset_fingerprint`，执行指纹纳入模型策略、知识绑定和组件配置等影响结果的环境覆盖 | T5.7 |
 | T6.4 | 端到端联调 + Bug 修复 | 0.5d | 全链路跑通 | 以上全部 |
 
 **第 6 周前 3 天验收**：solution release 在评测门禁未通过时阻断发布，组件间类型流校验生效。
@@ -260,6 +270,7 @@
 - [ ] solution evaluate 命令可用，输出结果可读，--json 提供 warnings 与 warnings_exist
 - [ ] Golden Case 的 JSONL 格式文档已提供，支持 runtime_request_jsonl
 - [ ] 当 citation_coverage 低于 0.95 时，solution release 必须失败（对应 MVP 验收标准 8）
+- [ ] 更换 `defaultModel`、`fallbackModel`、模型 endpoint、知识绑定或组件配置后，`eval_gates_passed` 不得复用旧评测缓存
 - [ ] schedule: weekly 的门禁不阻断 release，仅输出告警
 - [ ] 评测结果与 Trace 数据关联，可下钻分析
 
@@ -308,7 +319,7 @@
 |------|------|------|------|------|
 | T7.1 | 实现 model/sensor/action 凭证检查 | 0.5d | internal/release/checks/credentials.go | M1 T2.1 |
 | T7.2 | 实现 signal_ingress_reachable 检查 | 0.25d | internal/release/checks/ingress.go | M1 T2.7 |
-| T7.3 | 实现 knowledge_quality_passed 检查（读取质量报告） | 0.25d | internal/release/checks/knowledge.go | M2 T3.7 |
+| T7.3 | 实现 knowledge_quality_passed 检查（读取质量报告） | 0.25d | internal/release/checks/knowledge.go；校验 `manifest_fingerprint`、`knowledge_config_fingerprint`、`knowledge_sources_fingerprint`、TTL 和 block 项 | M2 T3.7 |
 | T7.4 | 实现 observability_enabled 检查 | 0.25d | internal/release/checks/observability.go | M1 T2.9 |
 | T7.5 | 实现 security_baseline_passed 检查（PII 检测、prompt injection 防御配置） | 0.25d | internal/release/checks/security.go | M1 T1.4 |
 | T7.6 | 实现 Release Checker 编排器（顺序执行，任一失败阻断） | 0.5d | internal/release/checker.go 完善 | T7.1-T7.5, M3 T6.3 |
