@@ -619,7 +619,7 @@ Go/Python 边界：
 - Phase 1 保持纯 Go：`solution run` 直接加载 JSONL 并构建内存关键词索引。可检索文本字段按优先级从 `answer`、`resolution`、`question`、`symptom`、`cause`、`description`、`content` 中选取第一个非空字段；Manifest Schema 字段与 JSONL 实际字段通过此优先级规则映射。
 - Phase 2 的 `solution ingest` 仍由 Go CLI 编排；当知识源是 PDF、Word、图片或 Markdown 等重文档时，Go 调用 Python Worker 生成标准 JSONL 中间产物。
 - Go ingest 读取 Python 输出的 JSONL，执行 Schema 门禁、质量报告生成和 PostgreSQL 写入。
-- Python Worker 可部署为本地子进程、独立容器或 Kubernetes Job，但接口先保持“输入文件/目录 -> 输出 JSONL + worker report”，不引入 gRPC 作为第一版强依赖。
+- Python Worker 在 M2 阶段明确采用本地子进程调用方式（Go 启动 Python 子进程，传递文件路径参数，Python 退出码 0 表示成功，Go 读取输出 JSONL 和质量报告）；独立容器或 Kubernetes Job 为生产演进方向。接口保持“输入文件/目录 -> 输出 JSONL + worker report”，不引入 gRPC 作为第一版强依赖。
 - Phase 2 ingest 的 PostgreSQL 写入、索引切换和质量报告更新必须保持事务性或等价原子性，避免 release 读取半更新知识状态。
 
 embedding 配置：
@@ -925,7 +925,7 @@ Release Checker 是同步阻断器。
 - 输出 machine-readable report。
 - 所有检查必须可单测。
 - `action_credentials_configured` 检查 action 组件配置中的 `apiKeyRef`、`tokenRef`、`secretRef` 等敏感引用是否存在且非空。
-- `knowledge_quality_passed` 按以下顺序查找质量报告 — 1) 当前环境 `tracePath` 下最近一次 `solution run` 或 `solution ingest` 生成的质量报告；2) 如不存在，`solution release` 自行执行一次知识加载和质量门禁检查并生成报告。报告必须绑定 `manifest_fingerprint`、`knowledge_config_fingerprint` 和 `knowledge_sources_fingerprint`；任一指纹不匹配、超过 24 小时或存在 block 项都失败。报告写入必须先落到临时文件，再原子 rename 到最终路径。
+- `knowledge_quality_passed` 按以下顺序查找质量报告 — 1) 当前环境 `tracePath` 下最近一次 `solution run` 或 `solution ingest` 生成的质量报告；2) 如不存在，`solution release` 直接失败，提示 FDE 先执行 `solution run` 或 `solution ingest` 生成质量报告。`solution release` 只检查不修复。报告必须绑定 `manifest_fingerprint`、`knowledge_config_fingerprint` 和 `knowledge_sources_fingerprint`；任一指纹不匹配、超过 24 小时或存在 block 项都失败。报告写入必须先落到临时文件，再原子 rename 到最终路径。
 - `eval_gates_passed` 现场执行 `schedule: onRelease` 且 `severity: block` 的评测门禁，或在缓存的 `execution_fingerprint`、`dataset_fingerprint` 匹配且未过期（默认 1 小时）时复用缓存。`execution_fingerprint` 必须包含影响执行结果的环境覆盖字段，例如 `defaultModel`、`fallbackModel`、`maxLatencyMs`、模型供应商 endpoint、知识绑定和组件配置；`tracePath`、`retainDays` 等非执行字段不进入该指纹。`schedule: weekly` 只产生告警和报告，不影响 `solution release` 成功退出。
 
 成功产物：

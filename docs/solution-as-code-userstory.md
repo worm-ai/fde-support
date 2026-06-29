@@ -41,6 +41,7 @@
 | STORY-006a | 手动触发知识摄取并执行质量门禁 | P1 | 3 | 知识工程流水线 |
 | STORY-006b | 知识变更自动化与专家工作台 | P2 | 5 | 知识工程流水线 |
 | STORY-007 | 复用于新品牌——资产复用与快速交付 | P1 | 3 | 可组合资产与模板 |
+| STORY-008 | 通过 http-caller 组件对接客户外部系统 API | P1 | 3 | 组件与工作流 |
 
 ---
 
@@ -735,11 +736,104 @@ evaluation:
       uri: ./data/guoran/evals/golden.jsonl   # 修改
 ```
 
+## STORY-008：通过 http-caller 组件对接客户外部系统 API
+
+**基础信息**
+
+- 故事ID：STORY-008
+- 故事标题：通过 http-caller 组件对接客户外部系统 API
+- 所属模块：组件与工作流（action 组件）
+- 优先级：P1
+- 故事点：3
+- 负责人：FDE 周远，组件注册表团队
+- 计划迭代：MVP Phase 2
+
+**核心用户故事**
+
+> 作为 **FDE**，
+> 我想要 **在 Manifest 中配置 `http-caller` 组件，通过声明式 YAML 调用客户外部系统 API（CRM 查询、通知 Webhook、工单系统集成）**，
+> 以便 **在客户现场对接真实外部系统时无需编写自定义 Go 组件，通过纯配置完成 HTTP 集成**。
+
+**验收标准**
+
+1. **正常场景：配置 http-caller 调用外部 API**
+   - Given Manifest 中声明 `http-caller` 组件，配置了 URL、HTTP 方法、Headers 模板和 Body 模板
+   - When 工作流执行到 `http-caller` 节点
+   - Then 组件发起 HTTP 请求到配置的目标 URL
+   - And 返回响应状态码、响应头和响应体给下游节点引用（`lookup_customer.status`、`lookup_customer.body`）
+   - And HTTP 调用记录在 Trace 中（目标 host、方法、状态码、耗时和脱敏后的错误），不记录密钥和完整 URL query
+
+2. **异常场景：外部系统不可达时降级**
+   - Given `http-caller` 配置了 `continueOnFailure: true`
+   - When 外部系统不可达或返回 5xx
+   - Then 组件返回 `{"status":"failed"}`
+   - And 工作流继续执行后续节点
+   - And Trace 中记录失败信息
+
+3. **边界场景：认证信息通过环境变量注入**
+   - Given `http-caller` 的 `headers` 中使用 `env:CRM_API_KEY` 引用
+   - When 组件执行
+   - Then 解析后的 API Key 用于请求头
+   - And 密钥值不出现在 Trace 或日志中
+
+4. **边界场景：超时控制**
+   - Given `http-caller` 配置了 `timeoutMs: 5000`
+   - When 外部系统响应超过 5 秒
+   - Then 组件超时返回失败
+   - And Trace 记录超时事件
+
+**完成定义**
+
+- [ ] `http-caller`（`registry.action.http-caller@1.0.0`）已在平台内置注册表中注册，Phase 2 可用
+- [ ] `RuntimeContext.HTTP()` 能力在 Phase 2 可用，供 `http-caller` 组件调用
+- [ ] HTTP 请求/响应摘要写入 Trace（脱敏）
+- [ ] FDE 可通过 Manifest YAML 配置外部 API 调用，无需编写自定义 Go 组件
+- [ ] 支持 `env:VAR_NAME` 引用注入认证信息
+
+**核心 Manifest 片段**
+
+```yaml
+components:
+  # ...已有组件...
+  - id: crm_lookup
+    category: action
+    ref: registry.action.http-caller@1.0.0
+    config:
+      url: https://crm.example.com/api/v1/customers
+      method: POST
+      headers:
+        Authorization: env:CRM_API_KEY
+        Content-Type: application/json
+      bodyTemplate: |
+        {"phone": "{{inputs.phone}}"}
+      timeoutMs: 5000
+      continueOnFailure: true
+```
+
+```yaml
+workflow:
+  nodes:
+    # ...已有节点...
+    - id: lookup_customer
+      component: crm_lookup
+      inputs:
+        phone: inputs.phone
+    - id: generate_answer
+      component: answer_generator
+      inputs:
+        message: inputs.message
+        customer_info: lookup_customer.body
+```
+
+**与 STORY-004 的关系**
+
+STORY-004 使用 `mock-create-service-ticket` 模拟工单创建，STORY-008 提供真实的 HTTP 调用能力。两者互补：mock action 用于 PoC 演示，`http-caller` 用于生产对接。FDE 可在 POC 阶段使用 mock，在发布到生产时替换为 `http-caller` + 真实 endpoint。
+
 ---
 
 ## 附录：跨故事共用的 Manifest 完整示例
 
-以下是 STORY-001 至 STORY-004 整合后的 Manifest 完整版，供实现参考：
+以下是 STORY-001 至 STORY-008 整合后的 Manifest 完整版，供实现参考：
 
 ```yaml
 apiVersion: solution.codex/v1

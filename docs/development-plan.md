@@ -18,7 +18,7 @@
 | 里程碑 | 阶段名称 | 周期 | 关联故事 | 核心交付 |
 |--------|---------|------|---------|---------|
 | M1 | Manifest 解析器与 Runtime 内核 | 2 周 | STORY-001, STORY-003, STORY-004 | solution validate/run，Chat + W2A 入口，工作流执行，Trace |
-| M2 | 多模态知识与通用组件集 | 2 周 | STORY-006a | solution ingest，组件注册表，通用组件库，方案模板，Python Worker 原型 |
+| M2 | 多模态知识与通用组件集 | 2 周 | STORY-006a, STORY-008 | solution ingest，组件注册表，通用组件库，方案模板，Python Worker 原型 |
 | M3 | 多模式评测与发布门禁 | 1.5 周 | STORY-002, STORY-005（部分） | solution evaluate，solution release（评测门禁部分），类型流校验 |
 | M4 | 交付打包、组件共享与模板市场 | 1 周 | STORY-005（收尾）, STORY-007 | solution release 完整链路，Docker Compose 产物，组件发布，复用率统计 |
 
@@ -144,6 +144,7 @@
 | 故事ID | 标题 | 优先级 | 故事点 |
 |--------|------|--------|--------|
 | STORY-006a | 手动触发知识摄取并执行质量门禁 | P1 | 3 |
+| STORY-008 | 通过 http-caller 组件对接客户外部系统 API | P1 | 3 |
 
 ### M2 交付物清单
 
@@ -182,7 +183,7 @@
 | T4.1 | 搭建 Python Worker 工程骨架 | 0.5d | workers/knowledge/，pyproject.toml | — |
 | T4.2 | 实现 PDF/Word/Markdown -> JSONL 解析流水线 | 1.5d | workers/knowledge/parser.py | T4.1 |
 | T4.3 | 实现 CSV/Excel -> 标准化表格格式流水线 | 0.5d | workers/knowledge/table_parser.py | T4.1 |
-| T4.4 | Go ingest 调用 Python Worker（子进程，文件系统交换 JSONL） | 0.5d | internal/knowledge/python_bridge.go | T3.6, T4.2 |
+| T4.4 | Go ingest 调用 Python Worker（明确采用子进程调用：Go 启动 Python 子进程传递文件路径参数，Python 退出码 0=成功/非0=失败，Go 读取输出 JSONL 和质量报告） | 0.5d | internal/knowledge/python_bridge.go | T3.6, T4.2 |
 | T4.5 | Model Gateway 增强（多供应商路由预留、成本控制、配额管理）；M1 已有基于环境密钥的最小实现 | 0.5d | internal/model/gateway.go 增强 | M1 T2.6 |
 | T4.6 | 实现 RuntimeContext.HTTP() 能力 | 0.5d | internal/component/context_http.go | M1 T1.7 |
 | T4.7 | 编写 3 个内置方案模板 Manifest（客服问答、数据查询、告警升级） | 1d | templates/ 目录 | M1 T2.11 |
@@ -200,7 +201,8 @@
 - [ ] FDE 选择平台内置模板，修改知识源路径和 prompt 配置后，solution run 可拉起一个不同于售后问答的方案
 - [ ] 同一个通用组件（如 llm-classifier）通过不同 Manifest 配置适配不同行业和场景
 - [ ] Python Worker 可将 PDF/Word/Markdown 转换为符合 Schema 的 JSONL
-- [ ] RuntimeContext.HTTP() 可供组件调用外部 API
+- [ ] Go 可启动 Python 子进程，传递文件路径参数；Python 退出码 0 表示成功，非 0 表示失败；Go 读取 Python 输出的 JSONL 和质量报告
+- [ ] RuntimeContext.HTTP() 可供组件调用外部 API，并在 Trace 中记录请求/响应摘要（脱敏）
 
 ### M2 风险与缓解
 
@@ -235,7 +237,7 @@
 6. 门禁阻断功能：block 失败退出码 1，warn 失败退出码 0 但输出告警
 7. 组件间类型流校验：Validator 检查工作流上下游节点的 input/output schema 类型兼容性（原第8项上移）
 
-9. Trace 数据可用于评测调试
+8. Trace 数据可用于评测调试
 
 ### M3 详细任务拆分
 
@@ -344,7 +346,7 @@
 ### M4 验收标准（对应 MVP 验收标准 9-10）
 
 - [ ] solution release 在全部检查通过后生成 ./deploy/<env>/ 部署产物
-- [ ] model_credentials_configured、sensor_credentials_configured、action_credentials_configured、signal_ingress_reachable 在配置缺失时使 release 失败（对应 MVP 验收标准 9）
+- [ ] model_credentials_configured、sensor_credentials_configured、action_credentials_configured、signal_ingress_reachable 在配置缺失时使 release 失败（对应 MVP 验收标准 9）。signal_ingress_reachable 在非 Docker Compose 目标中仅检查 Runtime `/health` 和 endpoint 注册状态，不要求真实探测外部可达性
 - [ ] 增加或选择 production 环境时，只改变环境配置，不改变工作流逻辑（对应 MVP 验收标准 10）
 - [ ] docker-compose.yaml 启动同一个 Runtime 二进制，并使用源 Manifest 的只读快照或等价卷挂载，行为与 solution run 等价
 - [ ] 同一份 Manifest 从 poc 提升到 production，无需修改工作流逻辑
@@ -356,7 +358,7 @@
 
 | 风险 | 影响 | 缓解 |
 |------|------|------|
-| signal_ingress_reachable 检查在不同部署目标中适配困难 | 检查不稳定 | 非 Docker Compose 目标（K8s Ingress、VPC 内网）的具体探测适配方式列为待决策项 |
+| signal_ingress_reachable 检查在不同部署目标中适配困难 | 检查不稳定 | Docker Compose 目标探测 endpoint 可达性；非 Docker Compose 目标（K8s Ingress、VPC 内网）仅检查 Runtime `/health` 和 endpoint 注册状态，不要求真实探测外部可达性。完整探测能力列为后续迭代 |
 | 组件发布涉及版本冲突 | 注册表数据损坏 | 发布前校验版本唯一性，冲突时提示已有版本信息 |
 | 部署产物与 solution run 行为不一致 | 环境漂移 | docker-compose.yaml 必须启动同一二进制和同一份 Manifest，CI 中增加一致性测试 |
 
@@ -374,6 +376,7 @@
 | STORY-006a | 手动知识摄取 + 质量门禁 | P1 | 3 | — | 核心 | — | — |
 | STORY-006b | 知识变更自动化 + 专家工作台 | P2 | 5 | — | — | — | 后续 |
 | STORY-007 | 资产复用 + 快速交付新品牌 | P1 | 3 | — | — | — | 核心 |
+| STORY-008 | http-caller 对接外部系统 API | P1 | 3 | — | 核心 | — | — |
 
 ---
 
@@ -545,3 +548,18 @@ flowchart LR
 | P3 | 多租户企业级控制平面 | — |
 | P3 | 完整可视化工作流构建器 | — |
 | P3 | Policy-as-Code 集成 + 审批工作流 | — |
+
+
+---
+
+## 附录 J：实现规格附件（供 AI / 开发团队直接引用）
+
+以下规格附件从详细设计文档与技术架构文档中摘录关键实现细节，解决开发计划书中任务描述不够具体的问题。执行对应任务时可直接引用。
+
+| 附件 | 文件 | 对应任务 | 解决什么问题 |
+|------|------|---------|-------------|
+| 附件 1 | [attachment-1-knowledge-unit-jsonl.md](/Users/cc/ai/fde-support/docs/specs/attachment-1-knowledge-unit-jsonl.md) | T2.5, T3.7 | JSONL 记录格式、Loader 校验行为矩阵、质量报告格式 |
+| 附件 2 | [attachment-2-component-specs.md](/Users/cc/ai/fde-support/docs/specs/attachment-2-component-specs.md) | T2.3, T3.3 | 7 个内置组件的 config/input/output schema、错误模型、行为描述 |
+| 附件 3 | [attachment-3-trace-json-schema.md](/Users/cc/ai/fde-support/docs/specs/attachment-3-trace-json-schema.md) | T2.9, T5.8 | Trace JSON Schema（success/rejected/failed）、脱敏规则、Go 类型定义 |
+| 附件 4 | [attachment-4-golden-case-jsonl.md](/Users/cc/ai/fde-support/docs/specs/attachment-4-golden-case-jsonl.md) | T5.1, T5.2 | Golden Case JSONL 格式、expected 判定规则、门禁语义 |
+| 附件 5 | [attachment-5-type-compatibility.md](/Users/cc/ai/fde-support/docs/specs/attachment-5-type-compatibility.md) | T6.2 | 类型兼容性矩阵（5×5）、校验时机与范围、错误格式 |
