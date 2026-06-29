@@ -15,13 +15,16 @@
 - 组件不可恢复的系统异常必须通过返回值 `(nil, error)` 抛出；action 组件的可恢复业务失败通过 `output["status"] = "failed"` 表达，禁止使用 `"error"` 作为 status 值。processor 组件的输出不包含 `status` 字段。
 - MVP 中的 W2A Sensor 采用 Runtime 内置 Webhook 入口模型：Runtime 根据 `perception.sensors[].config.endpointPath` 暴露 HTTP 入口并校验认证；独立 Sensor 进程或 SensorHub 集成属于后续能力。
 - `@world2agent/sensor-webhook@1.0.0` 是 MVP `SensorRegistry` 的内置 Sensor 引用，不要求从 npm 安装，也不通过 `ComponentRegistry` 解析；版本必须显式 pin。
+- W2A Signal 幂等缓存仅在认证和 envelope 校验通过后才查询/写入；认证失败的请求不参与幂等缓存。
 - `RuntimeContext.Model()` 在 Phase 1 提供基于环境密钥的最小模型网关实现（如调用 OpenAI API）；`HTTP()` 能力在 Phase 2 可用。
 - W2A Sensor 只负责把外部事件标准化为 W2A Signal，不负责业务决策、工作流编排、RAG、动作执行或发布治理。
+- SignalRouter 必须校验 `signal.source.sensor_id` 等于当前 endpoint 对应的 Manifest Sensor ID，防止 Signal 来源伪造。
 - Phase 1 只验证 Runtime 内核、统一组件接口（含 `llm-classifier`、`retriever`、`llm-generator`、`human-handoff`）、mock action、Trace、W2A Signal 入口和启动时 JSONL 知识加载；真实知识摄取流水线、真实外部系统调用、知识工作台和增量索引不进入 Phase 1。
 - Phase 1 检索组件统一使用 `registry.retriever.local-keyword@1.0.0`；混合检索和向量检索属于 Phase 2+。
 - Manifest 中引用的组件版本号必须与平台内置注册表中已注册的版本一致；Phase 1 内置组件版本均为 `@1.0.0`。
 - 所有组件的 citations 统一使用 `string[]` 格式（`"source#ref"`），由知识加载时统一生成该格式的引用字符串。
 - `knowledge.sources[].uri`、`evaluation.datasets[].uri` 等相对路径均以 Manifest 文件所在目录为基准解析。
+- Phase 1 JSONL 知识加载时，可检索文本字段按优先级从 `answer`、`resolution`、`question`、`symptom`、`cause`、`description`、`content` 中选取第一个非空字段；Manifest Schema 字段与 JSONL 实际字段通过此优先级规则映射。
 - `sessionId` 在 MVP 中仅用于请求关联，不提供跨轮会话记忆。
 
 ---

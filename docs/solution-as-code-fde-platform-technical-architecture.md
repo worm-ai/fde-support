@@ -350,8 +350,8 @@ W2A 只作为外部世界信号输入。平台实现一个 W2A adapter：
 - 校验 Bearer token。
 - 使用 `schema_version` 对应的预定义 schema 校验 W2A 标准 envelope；官方 SDK 可以作为协议依赖，但平台核心不依赖 W2A 仓库运行时栈。
 - 拒绝未知 `schema_version`；MVP 只接受 `w2a/0.1`。
-- 校验 W2A `event.type` 是否在 Manifest `signalTypes` 白名单中。
-- 以 `environment + source.sensor_id + signal_id` 作为幂等键，重复请求不得重复执行 Workflow。
+- 校验 W2A `event.type` 是否在 Manifest `signalTypes` 白名单中；同时校验 `signal.source.sensor_id` 必须等于当前 endpoint 对应的 Manifest Sensor ID。
+- 以 `environment + source.sensor_id + signal_id` 作为幂等键，重复请求不得重复执行 Workflow。幂等缓存仅在认证和 envelope 校验通过后才查询或写入；认证失败的请求不参与幂等缓存。
 - 将 W2A 标准 envelope 原样放入 `RuntimeRequest.signal`。
 
 RuntimeRequest 保留字段：
@@ -592,7 +592,7 @@ Phase 2+：
 
 Go/Python 边界：
 
-- Phase 1 保持纯 Go：`solution run` 直接加载 JSONL 并构建内存关键词索引。
+- Phase 1 保持纯 Go：`solution run` 直接加载 JSONL 并构建内存关键词索引。可检索文本字段按优先级从 `answer`、`resolution`、`question`、`symptom`、`cause`、`description`、`content` 中选取第一个非空字段；Manifest Schema 字段与 JSONL 实际字段通过此优先级规则映射。
 - Phase 2 的 `solution ingest` 仍由 Go CLI 编排；当知识源是 PDF、Word、图片或 Markdown 等重文档时，Go 调用 Python Worker 生成标准 JSONL 中间产物。
 - Go ingest 读取 Python 输出的 JSONL，执行 Schema 门禁、质量报告生成和 PostgreSQL 写入。
 - Python Worker 可部署为本地子进程、独立容器或 Kubernetes Job，但接口先保持“输入文件/目录 -> 输出 JSONL + worker report”，不引入 gRPC 作为第一版强依赖。
@@ -669,6 +669,7 @@ MVCR：
 - 每次请求一个 Trace。
 - 每个节点一个 span。
 - 失败路径写 `error`。
+- `logInputs: masked` 时对用户输入字段做脱敏处理（哈希或截断）；`raw_payload` 不写入 Trace；输出中的 PII 字段在写入前脱敏。
 
 生产：
 
@@ -898,7 +899,7 @@ Release Checker 是同步阻断器。
 - 输出 machine-readable report。
 - 所有检查必须可单测。
 - `action_credentials_configured` 检查 action 组件配置中的 `apiKeyRef`、`tokenRef`、`secretRef` 等敏感引用是否存在且非空。
-- `knowledge_quality_passed` 读取 `dirname(tracePath)/reports/knowledge-quality.json` 或 Phase 2 ingest 报告；报告缺失、fingerprint 不匹配、超过 24 小时或存在 block 项都失败。报告写入必须先落到临时文件，再原子 rename 到最终路径。
+- `knowledge_quality_passed` 按以下顺序查找质量报告 — 1) 当前环境 `tracePath` 下最近一次 `solution run` 或 `solution ingest` 生成的质量报告；2) 如不存在，`solution release` 自行执行一次知识加载和质量门禁检查并生成报告。报告 Manifest fingerprint（基于原始 Manifest 文件内容计算）或知识源 fingerprint 不匹配、超过 24 小时或存在 block 项都失败。报告写入必须先落到临时文件，再原子 rename 到最终路径。
 - `eval_gates_passed` 现场执行 `schedule: onRelease` 且 `severity: block` 的评测门禁，或在 fingerprint 匹配且未过期（默认 1 小时）时复用缓存；`schedule: weekly` 只产生告警和报告，不影响 `solution release` 成功退出。
 
 成功产物：
