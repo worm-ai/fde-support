@@ -2,4 +2,7 @@ bin/
 tmp/
 .solution/
 examples/**/.solution/
-.tools
+.tools/*
+!.tools/README.md
+.tools/go1.21.13/go/
+.tools/go1.21.13/*.zip
