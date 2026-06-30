@@ -81,6 +81,7 @@ workflow:
         severity: inputs.severity
     - id: notify
       component: notifier
+      continueOnFailure: true
       inputs:
         result: evaluate_alert.result
         source: inputs.source

@@ -65,6 +65,7 @@ workflow:
       inputs:
         message: inputs.message
         passages: query_data.rows
+        citations: query_data.citations
 
 runtime:
   knowledgeBindings:

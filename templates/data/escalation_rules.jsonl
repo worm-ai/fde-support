@@ -1,0 +1,2 @@
+{"source_ref":"rules#critical","condition":"severity == critical","action":"immediate_escalation","priority":"10","content":"Critical alerts require immediate escalation."}
+{"source_ref":"rules#high","condition":"severity == high","action":"escalate_to_l2","priority":"5","content":"High alerts should be escalated to L2."}

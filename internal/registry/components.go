@@ -312,11 +312,19 @@ func (c *dataQuery) Run(ctx context.Context, input map[string]any, runtime Runti
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	result, err := runtime.Knowledge().Retrieve(ctx, c.source+"::"+c.query, 10)
+	query := c.query
+	if query == "" {
+		query, _ = input["query"].(string)
+	}
+	result, err := runtime.Knowledge().Retrieve(ctx, query, 10)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"rows": result.Raw, "count": len(result.Raw), "status": "ok"}, nil
+	citations := make([]any, 0, len(result.Citations))
+	for _, citation := range result.Citations {
+		citations = append(citations, map[string]any{"source": citation.Source, "ref": citation.Ref})
+	}
+	return map[string]any{"rows": result.Raw, "count": len(result.Raw), "citations": citations, "status": "ok"}, nil
 }
 
 // ruleEvaluator evaluates a list of rules against the input.

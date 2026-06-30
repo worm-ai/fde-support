@@ -39,6 +39,33 @@ func TestIngestWritesReleaseCompatibleQualityReport(t *testing.T) {
 	assertReleaseCompatibleQualityReport(t, m, env, &report)
 }
 
+func TestLoadSupportsCSVKnowledgeSources(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "products.csv"), []byte("name,source_ref,content\nPump,products#1,Pump has stock\n"), 0o644); err != nil {
+		t.Fatalf("write csv: %v", err)
+	}
+	m := &manifest.SolutionManifest{
+		BaseDir: root,
+		Knowledge: manifest.KnowledgeSpec{
+			Sources: []manifest.KnowledgeSourceSpec{{ID: "products", Type: "csv", URI: "products.csv", Schema: "products"}},
+		},
+	}
+	store, report, err := Load(context.Background(), m, environment.ResolvedEnvironment{TracePath: filepath.Join(root, ".solution", "traces")})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if report.Status != "passed" {
+		t.Fatalf("report status = %q, want passed", report.Status)
+	}
+	result, err := store.Retrieve(context.Background(), "stock", 5)
+	if err != nil {
+		t.Fatalf("Retrieve() error = %v", err)
+	}
+	if len(result.Raw) != 1 || len(result.Citations) != 1 {
+		t.Fatalf("Retrieve() result = %#v, want one row and citation", result)
+	}
+}
+
 func qualityReportFixture(t *testing.T) (*manifest.SolutionManifest, environment.ResolvedEnvironment) {
 	t.Helper()
 

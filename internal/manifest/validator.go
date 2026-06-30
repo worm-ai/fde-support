@@ -22,13 +22,12 @@ type Validator struct {
 	sensors    w2a.SensorRegistry
 }
 
-
 // M2: supported platform capabilities
 var supportedCapabilities = map[string]bool{
-	"model.generate":    true,
-	"knowledge.search":  true,
-	"knowledge.query":   true, // M2
-	"http.call":         true, // M2
+	"model.generate":   true,
+	"knowledge.search": true,
+	"knowledge.query":  true, // M2
+	"http.call":        true, // M2
 }
 
 func validateComponentRequires(componentID string, desc registry.ComponentDescriptor, path string, add func(string, string, string)) {
@@ -147,8 +146,8 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 			add("DUPLICATE_ID", path+".id", "knowledge source id must be unique")
 		}
 		sourceByID[source.ID] = source
-		if source.Type != "jsonl" {
-			add("UNSUPPORTED_KNOWLEDGE_SOURCE_TYPE", path+".type", "M1 supports only jsonl knowledge sources")
+		if !supportedKnowledgeSourceType(source.Type) {
+			add("UNSUPPORTED_KNOWLEDGE_SOURCE_TYPE", path+".type", "knowledge source type must be jsonl, csv, table, or rules")
 		}
 	}
 	for i, schema := range m.Knowledge.Schemas {
@@ -188,7 +187,7 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 		add(issue.Code, issue.Path, issue.Message)
 	}
 
-		// Type flow validation: check upstream/downstream type compatibility
+	// Type flow validation: check upstream/downstream type compatibility
 	validateTypeFlow(m.Workflow.Nodes, componentDescByID, plan, add)
 
 	for i, node := range m.Workflow.Nodes {
@@ -344,6 +343,15 @@ func validateSecretMap(values map[string]any, path string, add func(string, stri
 func allowedEnvironmentOverride(key string) bool {
 	switch key {
 	case "modelKeyRef", "defaultModel", "fallbackModel", "maxLatencyMs", "maxCostPerRunUsd", "tracePath", "retainDays":
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedKnowledgeSourceType(sourceType string) bool {
+	switch sourceType {
+	case "jsonl", "csv", "table", "rules":
 		return true
 	default:
 		return false

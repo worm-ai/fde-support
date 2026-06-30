@@ -18,7 +18,11 @@ func TestM1ExamplesValidate(t *testing.T) {
 }
 
 func TestM2TemplatesValidate(t *testing.T) {
-	t.Skip("enable after M2 component descriptors and source type validation are implemented")
+	paths := []string{
+		filepath.Join("..", "..", "templates", "data-inquiry.yaml"),
+		filepath.Join("..", "..", "templates", "alert-escalation.yaml"),
+	}
+	validateManifestFiles(t, paths)
 }
 
 func TestManifestValidator(t *testing.T) {

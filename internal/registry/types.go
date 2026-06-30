@@ -305,7 +305,7 @@ func builtinComponentDescriptors() map[string]ComponentDescriptor {
 			Factory:      "data_query",
 			ConfigSchema: map[string]string{"source": "string", "query": "string?"},
 			InputSchema:  map[string]string{"query": "string?"},
-			OutputSchema: map[string]string{"status": "string", "rows": "array", "count": "number"},
+			OutputSchema: map[string]string{"status": "string", "rows": "array", "count": "number", "citations": "array"},
 			Requires:     []string{"knowledge.query"},
 		},
 		"registry.processor.rule-evaluator@1.0.0": {
