@@ -52,6 +52,7 @@ func TestCheckEvalGatesFailsOnOnReleaseBlockFailure(t *testing.T) {
 
 func TestRunFailsWhenOnReleaseEvalGateFails(t *testing.T) {
 	m := releaseQualityManifest()
+	m.Runtime.ModelPolicy = manifest.ModelPolicySpec{DefaultModel: "gpt-4.1"}
 	m.Runtime.Observability = manifest.ObservabilitySpec{Trace: "required"}
 	m.Delivery.Security = manifest.SecuritySpec{
 		PIIDetection:           "required",
@@ -64,6 +65,7 @@ func TestRunFailsWhenOnReleaseEvalGateFails(t *testing.T) {
 		}},
 	}
 	env := releaseQualityEnv(t)
+	t.Setenv("OPENAI_API_KEY", "test-key")
 	writeKnowledgeQualityReport(t, env, matchingKnowledgeQualityReport(m))
 	runner := &stubEvalRunner{report: &evaluation.EvalReport{
 		GateResults: []evaluation.GateResult{{
@@ -100,6 +102,60 @@ func TestRunFailsWhenOnReleaseEvalGateFails(t *testing.T) {
 	}
 }
 
+func TestCheckModelCredentialsFailsWithoutDefaultModel(t *testing.T) {
+	m := releaseQualityManifest()
+	env := releaseQualityEnv(t)
+	result := NewChecker(m, env).checkModelCredentials(context.Background())
+	if result.Passed {
+		t.Fatalf("expected model credentials check to fail without default model")
+	}
+}
+
+func TestRunDoesNotSkipMandatoryChecksWhenReleaseChecksProvided(t *testing.T) {
+	m := releaseQualityManifest()
+	m.Delivery.ReleaseChecks = []string{"observability_enabled"}
+	env := releaseQualityEnv(t)
+
+	report, err := NewChecker(m, env).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(report.Checks) != len(mandatoryReleaseChecks) {
+		t.Fatalf("checks len = %d, want %d: %#v", len(report.Checks), len(mandatoryReleaseChecks), report.Checks)
+	}
+	if !hasCheck(report, "knowledge_quality_passed") {
+		t.Fatalf("expected mandatory knowledge check in report: %#v", report.Checks)
+	}
+}
+
+func TestRunAlwaysExecutesMandatoryKnowledgeAndEvalChecks(t *testing.T) {
+	m := releaseQualityManifest()
+	m.Runtime.ModelPolicy.DefaultModel = "gpt-4.1"
+	m.Delivery.ReleaseChecks = []string{"model_credentials_configured"}
+	m.Evaluation = manifest.EvaluationSpec{
+		Datasets: []manifest.EvaluationDatasetSpec{{ID: "golden", URI: "golden.jsonl"}},
+		Gates: []manifest.EvaluationGateSpec{{
+			Metric: "citation_coverage", Min: 0.95, Severity: "block", Schedule: "onRelease",
+		}},
+	}
+	env := releaseQualityEnv(t)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	report, err := NewCheckerWithEvaluator(m, env, &stubEvalRunner{report: &evaluation.EvalReport{}}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if report.Passed {
+		t.Fatalf("expected release to fail because mandatory knowledge report is missing")
+	}
+	if !hasCheck(report, "knowledge_quality_passed") {
+		t.Fatalf("expected mandatory knowledge check in report: %#v", report.Checks)
+	}
+	if !hasCheck(report, "eval_gates_passed") {
+		t.Fatalf("expected mandatory eval check in report: %#v", report.Checks)
+	}
+}
+
 func TestCheckKnowledgeQualityFailsForStaleReport(t *testing.T) {
 	m := releaseQualityManifest()
 	env := releaseQualityEnv(t)
@@ -110,6 +166,19 @@ func TestCheckKnowledgeQualityFailsForStaleReport(t *testing.T) {
 	result := NewChecker(m, env).checkKnowledgeQuality(context.Background())
 	if result.Passed {
 		t.Fatalf("expected stale knowledge quality report to fail")
+	}
+}
+
+func TestCheckKnowledgeQualityFailsWhenReportMissing(t *testing.T) {
+	m := releaseQualityManifest()
+	env := releaseQualityEnv(t)
+
+	result := NewChecker(m, env).checkKnowledgeQuality(context.Background())
+	if result.Passed {
+		t.Fatalf("expected missing knowledge quality report to fail")
+	}
+	if _, err := os.Stat(env.ReportPath()); !os.IsNotExist(err) {
+		t.Fatalf("release quality check must not create report, stat err = %v", err)
 	}
 }
 
@@ -205,4 +274,13 @@ func writeKnowledgeQualityReport(t *testing.T, env environment.ResolvedEnvironme
 	if err := os.WriteFile(env.ReportPath(), bytes, 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
+}
+
+func hasCheck(report *ReleaseReport, name string) bool {
+	for _, check := range report.Checks {
+		if check.Name == name {
+			return true
+		}
+	}
+	return false
 }

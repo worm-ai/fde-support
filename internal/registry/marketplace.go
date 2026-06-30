@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"gopkg.in/yaml.v3"
 )
 
 // PublishComponent packages a component directory into a .tar.gz archive.
@@ -83,11 +85,11 @@ func PublishComponent(componentDir, outputDir string) (string, error) {
 
 // ReuseStats computes component and template reuse ratios for a manifest.
 type ReuseStats struct {
-	TotalComponents   int     `json:"totalComponents"`
-	ReusedComponents  int     `json:"reusedComponents"`
-	ReuseRatio        float64 `json:"reuseRatio"`
-	CustomComponents  int     `json:"customComponents"`
-	TemplateUsed      bool    `json:"templateUsed"`
+	TotalComponents  int     `json:"totalComponents"`
+	ReusedComponents int     `json:"reusedComponents"`
+	ReuseRatio       float64 `json:"reuseRatio"`
+	CustomComponents int     `json:"customComponents"`
+	TemplateUsed     bool    `json:"templateUsed"`
 }
 
 // ComputeReuseStats calculates reuse metrics for a solution manifest.
@@ -115,11 +117,5 @@ func sanitizeRef(ref string) string {
 }
 
 func yamlUnmarshal(data []byte, v interface{}) error {
-	return yamlUnmarshalFunc(data, v)
-}
-
-var yamlUnmarshalFunc = func(data []byte, v interface{}) error {
-	// Use a simple key-value parser for component.yaml
-	// In production, this would use gopkg.in/yaml.v3
-	return fmt.Errorf("yaml parsing not available in marketplace")
+	return yaml.Unmarshal(data, v)
 }

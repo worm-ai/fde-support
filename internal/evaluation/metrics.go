@@ -36,3 +36,54 @@ func evalAnswerAccuracy(gc GoldenCase, result EvalResult) (float64, bool) {
 	}
 	return 0, false
 }
+
+func evalResultAccuracy(gc GoldenCase, result EvalResult) (float64, bool) {
+	if len(gc.Expected.AnswerContains) == 0 {
+		return 0, false
+	}
+	answer := strings.ToLower(result.ActualAnswer)
+	for _, fragment := range gc.Expected.AnswerContains {
+		if !strings.Contains(answer, strings.ToLower(fragment)) {
+			return 0, true
+		}
+	}
+	return 1, true
+}
+
+func evalEscalationPrecision(gc GoldenCase, result EvalResult) (float64, bool) {
+	expected := strings.ToLower(gc.Expected.Intent)
+	if expected != "human_handoff" && expected != "complaint" {
+		return 0, false
+	}
+	actual := strings.ToLower(result.ActualIntent)
+	if actual == "human_handoff" || strings.Contains(actual, "handoff") {
+		return 1, true
+	}
+	for _, action := range result.ActualActions {
+		if actionHandoffLike(action) {
+			return 1, true
+		}
+	}
+	return 0, true
+}
+
+func actionHandoffLike(action any) bool {
+	switch v := action.(type) {
+	case map[string]any:
+		for _, key := range []string{"node", "status"} {
+			if value, ok := v[key].(string); ok && strings.Contains(strings.ToLower(value), "handoff") {
+				return true
+			}
+		}
+		if output, ok := v["output"]; ok {
+			return actionHandoffLike(output)
+		}
+	case []any:
+		for _, item := range v {
+			if actionHandoffLike(item) {
+				return true
+			}
+		}
+	}
+	return false
+}

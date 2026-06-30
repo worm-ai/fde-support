@@ -15,6 +15,9 @@ func GenerateDockerCompose(m *manifest.SolutionManifest, env environment.Resolve
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
 	}
+	if err := copyRuntimeInputs(m, outputDir); err != nil {
+		return err
+	}
 
 	// Write docker-compose.yaml
 	compose := generateComposeContent(m, env)
@@ -46,7 +49,6 @@ func generateComposeContent(m *manifest.SolutionManifest, env environment.Resolv
 		"services:",
 		"  solution-runtime:",
 		fmt.Sprintf("    image: solution-runtime:%s", m.Metadata.Version),
-		"    build: .",
 		"    command: [\"solution\", \"run\", \"/manifest/manifest.yaml\", \"--env\", \"" + env.EnvironmentName + "\", \"--addr\", \"0.0.0.0:8080\"]",
 		"    ports:",
 		"      - \"8080:8080\"",
@@ -116,12 +118,17 @@ func generateReadme(m *manifest.SolutionManifest, env environment.ResolvedEnviro
 		"2. Run `docker-compose up -d` to start the solution runtime.",
 		"3. Verify the service is running: `curl http://localhost:8080/health`",
 		"",
+		"## Runtime Image",
+		"",
+		fmt.Sprintf("This deployment expects the Docker image `solution-runtime:%s` to be available on the target host or registry before running `docker-compose up -d`.", m.Metadata.Version),
+		"Build or publish that image from the platform runtime before using this deployment package.",
+		"",
 		"## Rebuilding",
 		"",
 		"After updating the manifest or data files:",
 		"```bash",
 		"docker-compose down",
-		"docker-compose up -d --build",
+		"docker-compose up -d",
 		"```",
 		"",
 		"## Manifest",
@@ -131,6 +138,69 @@ func generateReadme(m *manifest.SolutionManifest, env environment.ResolvedEnviro
 		"Modify the manifest to change solution behavior without writing code.",
 	}
 	return strings.Join(lines, "\n")
+}
+
+func copyRuntimeInputs(m *manifest.SolutionManifest, outputDir string) error {
+	if m.Path != "" {
+		if err := copyFile(m.Path, filepath.Join(outputDir, "manifest.yaml")); err != nil {
+			return fmt.Errorf("copy manifest.yaml: %w", err)
+		}
+	}
+	for _, source := range m.Knowledge.Sources {
+		if source.URI == "" || filepath.IsAbs(source.URI) {
+			continue
+		}
+		cleanURI := filepath.Clean(source.URI)
+		if cleanURI == "." || cleanURI == ".." || strings.HasPrefix(cleanURI, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("knowledge source %s escapes manifest directory", source.URI)
+		}
+		src := filepath.Join(m.BaseDir, cleanURI)
+		if !containedPath(m.BaseDir, src) {
+			return fmt.Errorf("knowledge source %s escapes manifest directory", source.URI)
+		}
+		dst := filepath.Join(outputDir, cleanURI)
+		if !containedPath(outputDir, dst) {
+			return fmt.Errorf("knowledge source %s escapes output directory", source.URI)
+		}
+		info, err := os.Stat(src)
+		if err != nil {
+			return fmt.Errorf("stat knowledge source %s: %w", source.URI, err)
+		}
+		if info.IsDir() {
+			continue
+		}
+		if err := copyFile(src, dst); err != nil {
+			return fmt.Errorf("copy knowledge source %s: %w", source.URI, err)
+		}
+	}
+	return nil
+}
+
+func containedPath(base, target string) bool {
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return false
+	}
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(baseAbs, targetAbs)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0o644)
 }
 
 func collectSensorTokens(m *manifest.SolutionManifest) []string {

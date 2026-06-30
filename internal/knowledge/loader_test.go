@@ -21,6 +21,21 @@ func TestLoadWritesReleaseCompatibleQualityReport(t *testing.T) {
 	assertReleaseCompatibleQualityReport(t, m, env, report)
 }
 
+func TestLoadWithOptionsCanSkipWritingQualityReport(t *testing.T) {
+	m, env := qualityReportFixture(t)
+
+	_, report, err := LoadWithOptions(context.Background(), m, env, LoadOptions{WriteReport: false})
+	if err != nil {
+		t.Fatalf("LoadWithOptions() error = %v", err)
+	}
+	if report.Status != "passed" {
+		t.Fatalf("report status = %q, want passed", report.Status)
+	}
+	if _, err := os.Stat(env.ReportPath()); !os.IsNotExist(err) {
+		t.Fatalf("LoadWithOptions(WriteReport:false) wrote report, stat err = %v", err)
+	}
+}
+
 func TestIngestWritesReleaseCompatibleQualityReport(t *testing.T) {
 	m, env := qualityReportFixture(t)
 

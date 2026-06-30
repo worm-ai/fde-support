@@ -43,6 +43,28 @@ type Checker struct {
 	evaluator EvaluationRunner
 }
 
+var supportedReleaseChecks = map[string]bool{
+	"model_credentials_configured":  true,
+	"sensor_credentials_configured": true,
+	"action_credentials_configured": true,
+	"signal_ingress_reachable":      true,
+	"knowledge_quality_passed":      true,
+	"eval_gates_passed":             true,
+	"observability_enabled":         true,
+	"security_baseline_passed":      true,
+}
+
+var mandatoryReleaseChecks = map[string]bool{
+	"model_credentials_configured":  true,
+	"sensor_credentials_configured": true,
+	"action_credentials_configured": true,
+	"signal_ingress_reachable":      true,
+	"knowledge_quality_passed":      true,
+	"eval_gates_passed":             true,
+	"observability_enabled":         true,
+	"security_baseline_passed":      true,
+}
+
 // NewChecker creates a release checker.
 func NewChecker(m *manifest.SolutionManifest, env environment.ResolvedEnvironment) *Checker {
 	return &Checker{manifest: m, env: env}
@@ -74,8 +96,17 @@ func (c *Checker) Run(ctx context.Context) (*ReleaseReport, error) {
 		{"observability_enabled", c.checkObservability},
 		{"security_baseline_passed", c.checkSecurityBaseline},
 	}
+	declared := map[string]bool{}
+	for _, name := range c.manifest.Delivery.ReleaseChecks {
+		if supportedReleaseChecks[name] {
+			declared[name] = true
+		}
+	}
 
 	for _, check := range checks {
+		if len(declared) > 0 && !declared[check.name] && !mandatoryReleaseChecks[check.name] {
+			continue
+		}
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
@@ -90,8 +121,8 @@ func (c *Checker) Run(ctx context.Context) (*ReleaseReport, error) {
 }
 
 func (c *Checker) checkModelCredentials(ctx context.Context) CheckResult {
-	if c.manifest.Runtime.ModelPolicy.DefaultModel == "" {
-		return CheckResult{Name: "model_credentials_configured", Passed: true, Severity: "block", Message: "no model configured"}
+	if c.env.DefaultModel == "" && c.manifest.Runtime.ModelPolicy.DefaultModel == "" {
+		return CheckResult{Name: "model_credentials_configured", Passed: false, Severity: "block", Message: "runtime.modelPolicy.defaultModel is required"}
 	}
 	keyRef := c.env.ModelKeyRef
 	if keyRef == "" {

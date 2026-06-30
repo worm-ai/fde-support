@@ -30,6 +30,7 @@ type EvalResult struct {
 	ActualAnswer    string             `json:"actualAnswer,omitempty"`
 	ActualIntent    string             `json:"actualIntent,omitempty"`
 	ActualCitations []any              `json:"actualCitations,omitempty"`
+	ActualActions   []any              `json:"actualActions,omitempty"`
 	Failures        []string           `json:"failures,omitempty"`
 }
 
@@ -68,8 +69,10 @@ type MetricRegistry struct {
 func NewMetricRegistry() *MetricRegistry {
 	return &MetricRegistry{
 		metrics: map[string]MetricFunc{
-			"citation_coverage": evalCitationCoverage,
-			"answer_accuracy":   evalAnswerAccuracy,
+			"citation_coverage":    evalCitationCoverage,
+			"answer_accuracy":      evalAnswerAccuracy,
+			"result_accuracy":      evalResultAccuracy,
+			"escalation_precision": evalEscalationPrecision,
 		},
 	}
 }

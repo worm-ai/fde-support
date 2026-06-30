@@ -93,6 +93,34 @@ func TestManifestValidator(t *testing.T) {
 			},
 			wantCode: "UNKNOWN_KNOWLEDGE_SOURCE",
 		},
+		{
+			name: "unknown release check is rejected",
+			mutate: func(m *SolutionManifest) {
+				m.Delivery.ReleaseChecks = []string{"made_up_check"}
+			},
+			wantCode: "UNKNOWN_RELEASE_CHECK",
+		},
+		{
+			name: "solution type is required",
+			mutate: func(m *SolutionManifest) {
+				m.SolutionType = ""
+			},
+			wantCode: "MISSING_REQUIRED_FIELD",
+		},
+		{
+			name: "unknown solution type is rejected",
+			mutate: func(m *SolutionManifest) {
+				m.SolutionType = "unknown-type"
+			},
+			wantCode: "UNSUPPORTED_SOLUTION_TYPE",
+		},
+		{
+			name: "unsupported api version is rejected",
+			mutate: func(m *SolutionManifest) {
+				m.APIVersion = "solution.codex/v9"
+			},
+			wantCode: "UNSUPPORTED_API_VERSION",
+		},
 	}
 
 	for _, tt := range tests {
@@ -119,6 +147,26 @@ func TestManifestValidator(t *testing.T) {
 	}
 }
 
+func TestValidatorRejectsKnowledgeSourcePathEscape(t *testing.T) {
+	m := minimalManifest()
+	m.Knowledge.Sources[0].URI = "../secret.txt"
+
+	errs := NewValidator(registry.NewBuiltinComponentRegistry(), w2a.NewBuiltinSensorRegistry()).Validate(&m)
+	if !hasCode(errs, "INVALID_KNOWLEDGE_SOURCE_URI") {
+		t.Fatalf("expected INVALID_KNOWLEDGE_SOURCE_URI, got %#v", errs)
+	}
+}
+
+func TestValidatorRejectsAbsoluteKnowledgeSourcePath(t *testing.T) {
+	m := minimalManifest()
+	m.Knowledge.Sources[0].URI = `C:\secret.txt`
+
+	errs := NewValidator(registry.NewBuiltinComponentRegistry(), w2a.NewBuiltinSensorRegistry()).Validate(&m)
+	if !hasCode(errs, "INVALID_KNOWLEDGE_SOURCE_URI") {
+		t.Fatalf("expected INVALID_KNOWLEDGE_SOURCE_URI, got %#v", errs)
+	}
+}
+
 func validateManifestFiles(t *testing.T, paths []string) {
 	t.Helper()
 
@@ -139,8 +187,9 @@ func validateManifestFiles(t *testing.T, paths []string) {
 
 func minimalManifest() SolutionManifest {
 	return SolutionManifest{
-		APIVersion: "solution.ai/v1alpha1",
-		Kind:       "Solution",
+		APIVersion:   "solution.codex/v1",
+		Kind:         "Solution",
+		SolutionType: "customer-support",
 		Metadata: MetadataSpec{
 			Name:    "lecharm-support-agent",
 			Version: "0.1.0",

@@ -19,7 +19,6 @@ import (
 	"fde-support/internal/evaluation"
 	"fde-support/internal/knowledge"
 	"fde-support/internal/manifest"
-	"fde-support/internal/model"
 	"fde-support/internal/registry"
 	"fde-support/internal/release"
 	"fde-support/internal/runtimecore"
@@ -120,7 +119,10 @@ func BuildRuntime(ctx context.Context, manifestPath string, envName string) (*Ru
 		return nil, err
 	}
 	traceWriter := trace.NewFileTraceWriter(resolvedEnv.TracePath)
-	modelGateway := model.NewMockGateway()
+	modelGateway, err := buildModelGateway(resolvedEnv, false)
+	if err != nil {
+		return nil, err
+	}
 	httpGateway := &defaultHTTPCaller{}
 	executor, err := runtimecore.NewExecutor(m, resolvedEnv, componentRegistry, knowledgeStore, traceWriter, modelGateway, httpGateway)
 	if err != nil {
@@ -213,7 +215,10 @@ func EvaluateManifestFile(path string) (*evaluation.EvalReport, error) {
 		return nil, err
 	}
 	traceWriter := trace.NewFileTraceWriter(resolvedEnv.TracePath)
-	modelGateway := model.NewMockGateway()
+	modelGateway, err := buildModelGateway(resolvedEnv, false)
+	if err != nil {
+		return nil, err
+	}
 	httpGateway := &defaultHTTPCaller{}
 	executor, err := runtimecore.NewExecutor(m, resolvedEnv, componentRegistry, knowledgeStore, traceWriter, modelGateway, httpGateway)
 	if err != nil {
@@ -258,12 +263,16 @@ func ReleaseManifestFile(path, envName string) (*release.ReleaseReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	knowledgeStore, _, err := knowledge.Load(context.Background(), m, resolvedEnv)
+	knowledgeStore, _, err := knowledge.LoadWithOptions(context.Background(), m, resolvedEnv, knowledge.LoadOptions{WriteReport: false})
 	if err != nil {
 		return nil, err
 	}
 	traceWriter := trace.NewFileTraceWriter(resolvedEnv.TracePath)
-	executor, err := runtimecore.NewExecutor(m, resolvedEnv, componentRegistry, knowledgeStore, traceWriter, model.NewMockGateway(), &defaultHTTPCaller{})
+	modelGateway, err := buildModelGateway(resolvedEnv, false)
+	if err != nil {
+		return nil, err
+	}
+	executor, err := runtimecore.NewExecutor(m, resolvedEnv, componentRegistry, knowledgeStore, traceWriter, modelGateway, &defaultHTTPCaller{})
 	if err != nil {
 		return nil, err
 	}

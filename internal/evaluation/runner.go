@@ -73,6 +73,17 @@ func (r *Runner) Run(ctx context.Context, datasetURI string, gates []manifest.Ev
 	for _, gate := range gates {
 		actual, ok := report.Metrics[gate.Metric]
 		if !ok {
+			report.GateResults = append(report.GateResults, GateResult{
+				Metric:   gate.Metric,
+				Min:      gate.Min,
+				Actual:   0,
+				Severity: gate.Severity,
+				Schedule: gate.Schedule,
+				Passed:   false,
+			})
+			if gate.Severity == "block" {
+				report.Warnings = append(report.Warnings, fmt.Sprintf("gate %s failed: metric not found", gate.Metric))
+			}
 			continue
 		}
 		passed := actual >= gate.Min
@@ -122,6 +133,9 @@ func (r *Runner) runCase(ctx context.Context, gc GoldenCase) EvalResult {
 	if citations, ok := response["citations"].([]any); ok {
 		result.ActualCitations = citations
 	}
+	if actions, ok := response["actions"].([]any); ok {
+		result.ActualActions = actions
+	}
 
 	// Check intent match
 	if gc.Expected.Intent != "" && result.ActualIntent != gc.Expected.Intent {
@@ -131,7 +145,11 @@ func (r *Runner) runCase(ctx context.Context, gc GoldenCase) EvalResult {
 
 	// Run metrics
 	allPassed := true
-	for name, fn := range r.registry.metrics {
+	for _, name := range r.metricNames() {
+		fn := r.registry.Get(name)
+		if fn == nil {
+			continue
+		}
 		value, passed := fn(gc, result)
 		result.Metrics[name] = value
 		if !passed {
@@ -145,6 +163,13 @@ func (r *Runner) runCase(ctx context.Context, gc GoldenCase) EvalResult {
 	}
 
 	return result
+}
+
+func (r *Runner) metricNames() []string {
+	if len(r.manifest.Evaluation.Metrics) > 0 {
+		return r.manifest.Evaluation.Metrics
+	}
+	return []string{"citation_coverage", "answer_accuracy"}
 }
 
 func loadGoldenCases(path string) ([]GoldenCase, error) {

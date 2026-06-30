@@ -58,7 +58,15 @@ type QualityReportItem struct {
 	Message  string `json:"message"`
 }
 
+type LoadOptions struct {
+	WriteReport bool
+}
+
 func Load(ctx context.Context, m *manifest.SolutionManifest, env environment.ResolvedEnvironment) (*Store, *QualityReport, error) {
+	return LoadWithOptions(ctx, m, env, LoadOptions{WriteReport: true})
+}
+
+func LoadWithOptions(ctx context.Context, m *manifest.SolutionManifest, env environment.ResolvedEnvironment, opts LoadOptions) (*Store, *QualityReport, error) {
 	report := &QualityReport{
 		GeneratedAt:                time.Now().UTC(),
 		ManifestFingerprint:        fingerprintManifest(m),
@@ -94,8 +102,10 @@ func Load(ctx context.Context, m *manifest.SolutionManifest, env environment.Res
 		}
 	}
 	report.KnowledgeSourcesFingerprint = fingerprintSourceReports(report.Sources)
-	if err := writeReport(env.ReportPath(), report); err != nil {
-		return nil, report, err
+	if opts.WriteReport {
+		if err := writeReport(env.ReportPath(), report); err != nil {
+			return nil, report, err
+		}
 	}
 	if report.Status == "blocked" {
 		return nil, report, shared.NewError("KNOWLEDGE_QUALITY_BLOCKED", env.ReportPath(), "knowledge_quality_passed has block findings")

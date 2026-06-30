@@ -1,5 +1,6 @@
-apiVersion: solution.ai/v1alpha1
+apiVersion: solution.codex/v1
 kind: Solution
+solutionType: data-inquiry
 metadata:
   name: data-inquiry-template
   version: 0.1.0

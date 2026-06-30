@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"fde-support/internal/registry"
@@ -30,6 +31,24 @@ var supportedCapabilities = map[string]bool{
 	"http.call":        true, // M2
 }
 
+var supportedReleaseChecks = map[string]bool{
+	"model_credentials_configured":  true,
+	"sensor_credentials_configured": true,
+	"action_credentials_configured": true,
+	"signal_ingress_reachable":      true,
+	"knowledge_quality_passed":      true,
+	"eval_gates_passed":             true,
+	"observability_enabled":         true,
+	"security_baseline_passed":      true,
+}
+
+var supportedSolutionTypes = map[string]bool{
+	"customer-support": true,
+	"data-inquiry":     true,
+	"alert-escalation": true,
+	"approval-flow":    true,
+}
+
 func validateComponentRequires(componentID string, desc registry.ComponentDescriptor, path string, add func(string, string, string)) {
 	for _, req := range desc.Requires {
 		available, known := supportedCapabilities[req]
@@ -55,9 +74,16 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 
 	if strings.TrimSpace(m.APIVersion) == "" {
 		add("MISSING_REQUIRED_FIELD", "apiVersion", "apiVersion is required")
+	} else if m.APIVersion != "solution.codex/v1" {
+		add("UNSUPPORTED_API_VERSION", "apiVersion", "apiVersion must be solution.codex/v1")
 	}
 	if m.Kind != "Solution" {
 		add("INVALID_KIND", "kind", "kind must be Solution")
+	}
+	if strings.TrimSpace(m.SolutionType) == "" {
+		add("MISSING_REQUIRED_FIELD", "solutionType", "solutionType is required")
+	} else if !supportedSolutionTypes[m.SolutionType] {
+		add("UNSUPPORTED_SOLUTION_TYPE", "solutionType", "solutionType is not supported")
 	}
 	if strings.TrimSpace(m.Metadata.Name) == "" {
 		add("MISSING_REQUIRED_FIELD", "metadata.name", "metadata.name is required")
@@ -149,6 +175,7 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 		if !supportedKnowledgeSourceType(source.Type) {
 			add("UNSUPPORTED_KNOWLEDGE_SOURCE_TYPE", path+".type", "knowledge source type must be jsonl, csv, table, or rules")
 		}
+		validateRelativeManifestPath(source.URI, path+".uri", add)
 	}
 	for i, schema := range m.Knowledge.Schemas {
 		path := fmt.Sprintf("knowledge.schemas[%d]", i)
@@ -293,6 +320,12 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 		}
 	}
 
+	for i, check := range m.Delivery.ReleaseChecks {
+		if !supportedReleaseChecks[check] {
+			add("UNKNOWN_RELEASE_CHECK", fmt.Sprintf("delivery.releaseChecks[%d]", i), "release check is not supported")
+		}
+	}
+
 	return errs
 }
 
@@ -337,6 +370,20 @@ func validateSecretMap(values map[string]any, path string, add func(string, stri
 		if !ok || !shared.IsEnvSecretRef(s) {
 			add("INVALID_SECRET_REF", path+"."+key, "sensitive references must use env:VAR_NAME")
 		}
+	}
+}
+
+func validateRelativeManifestPath(uri string, path string, add func(string, string, string)) {
+	if strings.TrimSpace(uri) == "" {
+		return
+	}
+	if filepath.IsAbs(uri) || filepath.VolumeName(uri) != "" {
+		add("INVALID_KNOWLEDGE_SOURCE_URI", path, "knowledge source uri must be relative to the manifest directory")
+		return
+	}
+	clean := filepath.Clean(uri)
+	if clean == "." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
+		add("INVALID_KNOWLEDGE_SOURCE_URI", path, "knowledge source uri must not escape the manifest directory")
 	}
 }
 

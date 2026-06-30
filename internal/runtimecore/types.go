@@ -2,6 +2,7 @@ package runtimecore
 
 import (
 	"fde-support/internal/registry"
+	"fde-support/internal/trace"
 	"fmt"
 	"os"
 )
@@ -25,9 +26,9 @@ type ExecutionResult struct {
 }
 
 type runtimeContext struct {
-	environment string
-	knowledge   registry.KnowledgeReader
-	request     RuntimeRequest
+	environment  string
+	knowledge    registry.KnowledgeReader
+	request      RuntimeRequest
 	errSummary   *registry.RuntimeErrorSummary
 	modelGateway registry.ModelGateway
 	httpGateway  registry.HTTPCaller
@@ -76,9 +77,16 @@ type runtimeLogger struct {
 }
 
 func (l runtimeLogger) Info(traceID string, msg string, fields map[string]any) {
-	fmt.Fprintf(os.Stderr, "[%s] INFO: %s %v\n", traceID, msg, fields)
+	fmt.Fprintf(os.Stderr, "[%s] INFO: %s %v\n", l.effectiveTraceID(traceID), msg, trace.RedactMap(fields))
 }
 
 func (l runtimeLogger) Error(traceID string, msg string, fields map[string]any) {
-	fmt.Fprintf(os.Stderr, "[%s] ERROR: %s %v\n", traceID, msg, fields)
+	fmt.Fprintf(os.Stderr, "[%s] ERROR: %s %v\n", l.effectiveTraceID(traceID), msg, trace.RedactMap(fields))
+}
+
+func (l runtimeLogger) effectiveTraceID(traceID string) string {
+	if l.traceID != "" {
+		return l.traceID
+	}
+	return traceID
 }
