@@ -57,7 +57,7 @@ components:
     ref: registry.agent.cited-answer@1.2.0
 
 workflow:
-  entrypoint: support_agent
+  entrypoint: classify_intent
   onError:
     retry: 1
     fallbackNode: handoff
@@ -166,6 +166,13 @@ delivery:
 
 ## 快速开始
 
+PowerShell:
+
+```powershell
+$env:PATH = "C:\Users\1003584\.g\versions\1.26.1\bin;$env:PATH"
+go test ./cmd/... ./internal/...
+```
+
 ```bash
 # 构建
 go build -o bin/solution ./cmd/solution
@@ -175,6 +182,9 @@ go build -o bin/solution ./cmd/solution
 
 # 启动 Runtime
 ./bin/solution run examples/after-sales-support/manifest.yaml --env=poc --addr=127.0.0.1:8080
+
+# 发布检查
+./bin/solution release examples/after-sales-support/manifest.yaml --env=production
 ```
 
 打开浏览器访问 `http://127.0.0.1:8080`，进入 Web Console。

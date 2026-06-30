@@ -11,6 +11,9 @@ import (
 
 	"fde-support/internal/environment"
 	"fde-support/internal/manifest"
+	"fde-support/internal/model"
+	"fde-support/internal/registry"
+	"fde-support/internal/runtimecore"
 	"fde-support/internal/shared"
 	"fde-support/internal/trace"
 	"fde-support/internal/w2a"
@@ -121,6 +124,52 @@ func TestServerW2ASensorPreservesCachedIdempotencyStatus(t *testing.T) {
 	}
 }
 
+func TestServerChatTraceRedactsSensitiveInput(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	tracePath := t.TempDir()
+	writer := trace.NewFileTraceWriter(tracePath)
+	env := environment.ResolvedEnvironment{
+		EnvironmentName: "poc",
+		TracePath:       tracePath,
+	}
+	m := chatTraceManifest()
+	executor, err := runtimecore.NewExecutor(m, env, registry.NewBuiltinComponentRegistry(), nil, writer, model.NewMockGateway(), nil)
+	if err != nil {
+		t.Fatalf("NewExecutor() error = %v", err)
+	}
+	server := NewServer(m, env, executor, w2a.NewMemorySignalIdempotencyStore(), writer)
+
+	req := httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(`{"message":"my phone is 13800138000 and token is abc","sessionId":"s1"}`))
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /chat status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode chat response: %v", err)
+	}
+	traceID, ok := payload["traceId"].(string)
+	if !ok || traceID == "" {
+		t.Fatalf("traceId = %#v, want non-empty string", payload["traceId"])
+	}
+	record, err := writer.Load(ctx, traceID)
+	if err != nil {
+		t.Fatalf("Load(%q) error = %v", traceID, err)
+	}
+	bytes, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("marshal trace: %v", err)
+	}
+	text := string(bytes)
+	if strings.Contains(text, "13800138000") || strings.Contains(text, "abc") {
+		t.Fatalf("trace leaked sensitive data: %s", text)
+	}
+}
+
 func testManifest() *manifest.SolutionManifest {
 	return &manifest.SolutionManifest{
 		Metadata: manifest.MetadataSpec{
@@ -137,6 +186,26 @@ func testManifest() *manifest.SolutionManifest {
 					},
 				},
 			},
+		},
+	}
+}
+
+func chatTraceManifest() *manifest.SolutionManifest {
+	return &manifest.SolutionManifest{
+		Metadata: manifest.MetadataSpec{
+			Name:    "lecharm-support-agent",
+			Version: "0.1.0",
+		},
+		Workflow: manifest.WorkflowSpec{
+			InputMapping: map[string]map[string]string{
+				"chat": {
+					"message":   "request.message",
+					"sessionId": "request.sessionId",
+				},
+			},
+		},
+		Runtime: manifest.RuntimeSpec{
+			Observability: manifest.ObservabilitySpec{Trace: "required"},
 		},
 	}
 }

@@ -70,6 +70,7 @@ func (w *FileTraceWriter) Start(ctx context.Context, meta TraceRecord) (*TraceRe
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	meta.Input = RedactMap(meta.Input)
 	meta.TraceID = newTraceID()
 	meta.CreatedAt = time.Now().UTC()
 	meta.Status = "running"
@@ -83,6 +84,8 @@ func (w *FileTraceWriter) AppendSpan(ctx context.Context, traceID string, span T
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	span.Input = RedactMap(span.Input)
+	span.Output = RedactMap(span.Output)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if record, ok := w.records[traceID]; ok {

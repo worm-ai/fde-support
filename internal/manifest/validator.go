@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"fde-support/internal/registry"
@@ -22,6 +23,45 @@ type Validator struct {
 	sensors    w2a.SensorRegistry
 }
 
+// M2: supported platform capabilities
+var supportedCapabilities = map[string]bool{
+	"model.generate":   true,
+	"knowledge.search": true,
+	"knowledge.query":  true, // M2
+	"http.call":        true, // M2
+}
+
+var supportedReleaseChecks = map[string]bool{
+	"model_credentials_configured":  true,
+	"sensor_credentials_configured": true,
+	"action_credentials_configured": true,
+	"signal_ingress_reachable":      true,
+	"knowledge_quality_passed":      true,
+	"eval_gates_passed":             true,
+	"observability_enabled":         true,
+	"security_baseline_passed":      true,
+}
+
+var supportedSolutionTypes = map[string]bool{
+	"customer-support": true,
+	"data-inquiry":     true,
+	"alert-escalation": true,
+	"approval-flow":    true,
+}
+
+func validateComponentRequires(componentID string, desc registry.ComponentDescriptor, path string, add func(string, string, string)) {
+	for _, req := range desc.Requires {
+		available, known := supportedCapabilities[req]
+		if !known {
+			add("UNKNOWN_COMPONENT_REQUIRES", path+".requires", "component requires unknown capability: "+req)
+			continue
+		}
+		if !available {
+			add("COMPONENT_REQUIRES_UNAVAILABLE", path+".requires", "component requires capability that is not available in this phase: "+req)
+		}
+	}
+}
+
 func NewValidator(components registry.ComponentRegistry, sensors w2a.SensorRegistry) *Validator {
 	return &Validator{components: components, sensors: sensors}
 }
@@ -34,9 +74,16 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 
 	if strings.TrimSpace(m.APIVersion) == "" {
 		add("MISSING_REQUIRED_FIELD", "apiVersion", "apiVersion is required")
+	} else if m.APIVersion != "solution.codex/v1" {
+		add("UNSUPPORTED_API_VERSION", "apiVersion", "apiVersion must be solution.codex/v1")
 	}
 	if m.Kind != "Solution" {
 		add("INVALID_KIND", "kind", "kind must be Solution")
+	}
+	if strings.TrimSpace(m.SolutionType) == "" {
+		add("MISSING_REQUIRED_FIELD", "solutionType", "solutionType is required")
+	} else if !supportedSolutionTypes[m.SolutionType] {
+		add("UNSUPPORTED_SOLUTION_TYPE", "solutionType", "solutionType is not supported")
 	}
 	if strings.TrimSpace(m.Metadata.Name) == "" {
 		add("MISSING_REQUIRED_FIELD", "metadata.name", "metadata.name is required")
@@ -46,6 +93,9 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 	}
 	if strings.TrimSpace(m.Workflow.Entrypoint) == "" {
 		add("MISSING_REQUIRED_FIELD", "workflow.entrypoint", "workflow.entrypoint is required")
+	}
+	if len(m.Workflow.Nodes) > 0 && m.Workflow.Entrypoint != "" && m.Workflow.Entrypoint != m.Workflow.Nodes[0].ID {
+		add("INVALID_ENTRYPOINT", "workflow.entrypoint", "workflow.entrypoint must be the id of the first workflow node")
 	}
 
 	sensorByID := map[string]SensorSpec{}
@@ -104,6 +154,7 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 		if string(desc.Category) != component.Category {
 			add("COMPONENT_CATEGORY_MISMATCH", path+".category", "component category does not match registry descriptor")
 		}
+		validateComponentRequires(component.ID, desc, path, add)
 		if component.Category != string(registry.CategoryProcessor) && component.Category != string(registry.CategoryAction) {
 			add("INVALID_COMPONENT_CATEGORY", path+".category", "component category must be processor or action")
 		}
@@ -121,9 +172,10 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 			add("DUPLICATE_ID", path+".id", "knowledge source id must be unique")
 		}
 		sourceByID[source.ID] = source
-		if source.Type != "jsonl" {
-			add("UNSUPPORTED_KNOWLEDGE_SOURCE_TYPE", path+".type", "M1 supports only jsonl knowledge sources")
+		if !supportedKnowledgeSourceType(source.Type) {
+			add("UNSUPPORTED_KNOWLEDGE_SOURCE_TYPE", path+".type", "knowledge source type must be jsonl, csv, table, or rules")
 		}
+		validateRelativeManifestPath(source.URI, path+".uri", add)
 	}
 	for i, schema := range m.Knowledge.Schemas {
 		path := fmt.Sprintf("knowledge.schemas[%d]", i)
@@ -161,6 +213,9 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 	for _, issue := range compileIssues {
 		add(issue.Code, issue.Path, issue.Message)
 	}
+
+	// Type flow validation: check upstream/downstream type compatibility
+	validateTypeFlow(m.Workflow.Nodes, componentDescByID, plan, add)
 
 	for i, node := range m.Workflow.Nodes {
 		path := fmt.Sprintf("workflow.nodes[%d]", i)
@@ -265,6 +320,12 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 		}
 	}
 
+	for i, check := range m.Delivery.ReleaseChecks {
+		if !supportedReleaseChecks[check] {
+			add("UNKNOWN_RELEASE_CHECK", fmt.Sprintf("delivery.releaseChecks[%d]", i), "release check is not supported")
+		}
+	}
+
 	return errs
 }
 
@@ -312,9 +373,32 @@ func validateSecretMap(values map[string]any, path string, add func(string, stri
 	}
 }
 
+func validateRelativeManifestPath(uri string, path string, add func(string, string, string)) {
+	if strings.TrimSpace(uri) == "" {
+		return
+	}
+	if filepath.IsAbs(uri) || filepath.VolumeName(uri) != "" {
+		add("INVALID_KNOWLEDGE_SOURCE_URI", path, "knowledge source uri must be relative to the manifest directory")
+		return
+	}
+	clean := filepath.Clean(uri)
+	if clean == "." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
+		add("INVALID_KNOWLEDGE_SOURCE_URI", path, "knowledge source uri must not escape the manifest directory")
+	}
+}
+
 func allowedEnvironmentOverride(key string) bool {
 	switch key {
 	case "modelKeyRef", "defaultModel", "fallbackModel", "maxLatencyMs", "maxCostPerRunUsd", "tracePath", "retainDays":
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedKnowledgeSourceType(sourceType string) bool {
+	switch sourceType {
+	case "jsonl", "csv", "table", "rules":
 		return true
 	default:
 		return false

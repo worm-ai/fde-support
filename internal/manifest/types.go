@@ -1,16 +1,17 @@
 package manifest
 
 type SolutionManifest struct {
-	APIVersion string          `yaml:"apiVersion" json:"apiVersion"`
-	Kind       string          `yaml:"kind" json:"kind"`
-	Metadata   MetadataSpec    `yaml:"metadata" json:"metadata"`
-	Perception PerceptionSpec  `yaml:"perception" json:"perception"`
-	Knowledge  KnowledgeSpec   `yaml:"knowledge" json:"knowledge"`
-	Components []ComponentSpec `yaml:"components" json:"components"`
-	Workflow   WorkflowSpec    `yaml:"workflow" json:"workflow"`
-	Runtime    RuntimeSpec     `yaml:"runtime" json:"runtime"`
-	Evaluation EvaluationSpec  `yaml:"evaluation" json:"evaluation"`
-	Delivery   DeliverySpec    `yaml:"delivery" json:"delivery"`
+	APIVersion   string          `yaml:"apiVersion" json:"apiVersion"`
+	Kind         string          `yaml:"kind" json:"kind"`
+	SolutionType string          `yaml:"solutionType" json:"solutionType"`
+	Metadata     MetadataSpec    `yaml:"metadata" json:"metadata"`
+	Perception   PerceptionSpec  `yaml:"perception" json:"perception"`
+	Knowledge    KnowledgeSpec   `yaml:"knowledge" json:"knowledge"`
+	Components   []ComponentSpec `yaml:"components" json:"components"`
+	Workflow     WorkflowSpec    `yaml:"workflow" json:"workflow"`
+	Runtime      RuntimeSpec     `yaml:"runtime" json:"runtime"`
+	Evaluation   EvaluationSpec  `yaml:"evaluation" json:"evaluation"`
+	Delivery     DeliverySpec    `yaml:"delivery" json:"delivery"`
 
 	BaseDir string `yaml:"-" json:"-"`
 	Path    string `yaml:"-" json:"-"`

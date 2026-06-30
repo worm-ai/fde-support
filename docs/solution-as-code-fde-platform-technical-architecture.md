@@ -144,6 +144,10 @@ flowchart TD
 - V1：Go API/Runtime + PostgreSQL + MinIO + Redis + Python Worker。
 - V2：Runtime、Knowledge Worker、Evaluation Worker、Control Plane 拆分部署。
 
+范围说明：本架构文档会描述 V1/V2 的演进目标，但 M1/MVCR 的实现边界仍以详细设计的 Phase 1 为准：单个 Go Runtime、本地文件、内存关键词索引、JSON Trace 文件和进程内幂等。PostgreSQL、pgvector、MinIO、Redis、Python Worker、OpenTelemetry Collector 等均为 Phase 2+ 或生产演进能力，未在具体里程碑标注前不得进入 M1 任务范围。
+
+MVCR 部署约束：M1 只承诺单实例语义。横向多实例部署时，进程内幂等缓存、Trace 文件、质量报告和内存知识索引都可能分叉；必须引入共享 Redis/PostgreSQL 幂等存储、共享 Trace/报告存储和原子知识发布机制后，才能声明生产级多实例一致性。
+
 ## 5. 推荐仓库结构
 
 平台应使用独立仓库，例如：
@@ -206,6 +210,25 @@ solution-platform/
 - `workers/` 可以先为空，等 Phase 2/3 再引入 Python Worker。
 - `web/console` 不进入 MVCR 范围，但目录预留。
 
+设计模块到代码模块映射：
+
+| 详细设计模块 | 建议代码模块 | 说明 |
+|--------------|--------------|------|
+| Manifest | `internal/manifest` | 类型定义、加载、默认值、校验、版本兼容 |
+| Environment | `internal/environment` | 环境解析、覆盖白名单、密钥引用校验 |
+| Runtime / App | `internal/app`、`internal/api` | CLI/HTTP 启动、运行时装配、入口路由 |
+| Workflow | `internal/workflow` | 线性执行、`when`、输入映射、fallback、retry |
+| Component / RuntimeContext | `internal/component`、`pkg/componentapi` | 组件接口、内置组件、运行时能力注入 |
+| Component Registry | `internal/registry` | 内置 map、方案级发现、后续本地/远程注册表 |
+| Knowledge | `internal/knowledge` | JSONL loader、内存索引、质量报告、Phase 2 ingest |
+| Evaluation | `internal/evaluation` | golden case、指标计算、评测缓存 |
+| Release | `internal/release` | 发布检查、门禁、fingerprint |
+| W2A / Sensor | `internal/w2a` | Signal 校验、Sensor 路由、幂等 |
+| Trace | `internal/trace` | TraceWriter、TraceReader、脱敏规则 |
+| Model | `internal/model` | 模型网关、模型策略、用量统计 |
+| Security | `internal/security` | 密钥引用、脱敏、PII/prompt injection 检查 |
+| Delivery / Storage | `internal/delivery`、`internal/storage` | 部署包、持久化抽象、Phase 2+ 存储适配 |
+
 ## 6. 分层依赖规则
 
 依赖方向：
@@ -254,16 +277,17 @@ cmd/api/cli
 
 ```go
 type SolutionManifest struct {
-    APIVersion string          `yaml:"apiVersion"`
-    Kind       string          `yaml:"kind"`
-    Metadata   MetadataSpec    `yaml:"metadata"`
-    Perception PerceptionSpec  `yaml:"perception"`
-    Knowledge  KnowledgeSpec   `yaml:"knowledge"`
-    Components []ComponentSpec `yaml:"components"`
-    Workflow   WorkflowSpec    `yaml:"workflow"`
-    Runtime    RuntimeSpec     `yaml:"runtime"`
-    Evaluation EvaluationSpec  `yaml:"evaluation"`
-    Delivery   DeliverySpec    `yaml:"delivery"`
+    APIVersion   string          `yaml:"apiVersion"`
+    Kind         string          `yaml:"kind"`
+    Metadata     MetadataSpec    `yaml:"metadata"`
+    Perception   PerceptionSpec  `yaml:"perception"`
+    Knowledge    KnowledgeSpec   `yaml:"knowledge"`
+    Components   []ComponentSpec `yaml:"components"`
+    SolutionType string          `yaml:"solutionType"`
+    Workflow     WorkflowSpec    `yaml:"workflow"`
+    Runtime      RuntimeSpec     `yaml:"runtime"`
+    Evaluation   EvaluationSpec  `yaml:"evaluation"`
+    Delivery     DeliverySpec    `yaml:"delivery"`
 }
 ```
 
@@ -301,7 +325,7 @@ release checks
 - `workflow.nodes[].inputs` 与 `when` 不能引用带 `when` 的上游节点输出。
 - `when` 仅支持 `node_id.field` 一层访问。
 - `human_handoff.reason` 是 optional。
-- `knowledge.schemas[].fields` 在 MVCR 中主要作为结构说明；完整 required 校验属于 Phase 2 ingest，但 Phase 1 `solution run` 必须校验 JSONL 记录的最小契约：至少一个可检索文本字段和引用字段，默认引用字段为 `source_ref`。
+- `knowledge.sources[].type` 在 Phase 1 中直接使用实现格式（如 `jsonl`），等价于语义类型 `document` + 格式 `jsonl`。后续阶段将引入独立的 `format` 字段。`knowledge.schemas[].fields` 在 MVCR 中主要作为结构说明；完整 required 校验属于 Phase 2 ingest，但 Phase 1 `solution run` 必须校验 JSONL 记录的最小契约：至少一个可检索文本字段和引用字段，默认引用字段为 `source_ref`。Phase 2 起 `fields` 支持字段对象 `{name, required}`；`required: true` 是 `missing_required_fields` 的唯一阻断依据。
 - `delivery.environments[].config` 只能覆盖白名单字段。
 
 ### 7.3 Environment Resolver
@@ -349,8 +373,8 @@ W2A 只作为外部世界信号输入。平台实现一个 W2A adapter：
 - 校验 Bearer token。
 - 使用 `schema_version` 对应的预定义 schema 校验 W2A 标准 envelope；官方 SDK 可以作为协议依赖，但平台核心不依赖 W2A 仓库运行时栈。
 - 拒绝未知 `schema_version`；MVP 只接受 `w2a/0.1`。
-- 校验 W2A `event.type` 是否在 Manifest `signalTypes` 白名单中。
-- 以 `environment + source.sensor_id + signal_id` 作为幂等键，重复请求不得重复执行 Workflow。
+- 校验 W2A `event.type` 是否在 Manifest `signalTypes` 白名单中；同时校验 `signal.source.sensor_id` 必须等于当前 endpoint 对应的 Manifest Sensor ID。
+- 以 `environment + source.sensor_id + signal_id` 作为幂等键，重复请求不得重复执行 Workflow。幂等缓存仅在认证、envelope 校验、Sensor 来源校验和 Signal 类型校验通过后才查询或写入；认证失败的请求不参与幂等缓存。
 - 将 W2A 标准 envelope 原样放入 `RuntimeRequest.signal`。
 
 RuntimeRequest 保留字段：
@@ -389,7 +413,7 @@ type SignalIdempotencyStore interface {
 }
 ```
 
-MVCR 使用进程内 map + TTL，默认 TTL 24 小时，Runtime 重启后不保证幂等状态保留。生产演进使用 Redis 或 PostgreSQL，并复用同一接口。`IdempotencyRecord` 保存终态响应或入口拒绝结果；重复请求返回已保存结果，并标记 `duplicate: true`。
+MVCR 使用进程内 map + TTL，默认 TTL 24 小时，Runtime 重启后不保证幂等状态保留。生产演进使用 Redis 或 PostgreSQL，并复用同一接口。`IdempotencyRecord` 保存认证、envelope 校验、Sensor 来源校验和 Signal 类型校验通过后的终态响应或确定性入口拒绝结果；认证失败不写入幂等缓存。重复请求返回已保存结果，并标记 `duplicate: true`。
 
 ### 7.5 RuntimeRequest
 
@@ -458,7 +482,7 @@ WorkflowExecutor 结束后按确定性规则组装响应：
 2. `intent` 和 `confidence` 取自第一个成功返回这两个字段的 processor 节点。
 3. `answer` 取自最后一个成功返回 `answer` 的 processor 节点。
 4. `citations` 优先取 `answer` 来源节点的 `citations`；若缺失则回退到最近的 retriever 输出。
-5. `actions` 按执行顺序收集所有已执行 action 节点输出；soft failure action 也进入 `actions`，并保留 `status: failed` 与 `error`。
+5. `actions` 按执行顺序收集所有已执行 action 节点输出；soft failure action 的输出被原样收集（如 `{"status": "failed", ...}`），平台不额外注入 `error` 字段。
 6. hard failure 时不组装正常业务响应，只返回错误响应和 Trace。
 
 ### 7.8 Component Runtime
@@ -477,11 +501,11 @@ type Component interface {
 
 - 必须是一层 JSON object。
 - processor 组件返回业务输出，供后续节点和 Trace 使用。
-- action 组件必须返回结构化输出；`status=error` 视为硬失败，`status=failed` 视为软失败，是否中断由节点策略决定。
+- processor 组件通过返回值 `(nil, error)` 表达不可恢复的系统异常；action 组件的系统异常同样通过 `(nil, error)` 返回，可恢复的业务失败通过 `output["status"] = "failed"` 表达。任何组件不得使用 `"error"` 作为 status 值。
 
 Action 节点策略：
 
-- 默认 `continueOnFailure: false`，表示 action 返回 `status=failed` 时按硬失败处理。
+- 默认 `continueOnFailure: false`，表示 action 通过 `(nil, error)` 返回系统异常或 `output["status"] = "failed"` 时按硬失败处理。
 - 如需允许软失败继续，必须显式配置 `continueOnFailure: true`。
 - `processor` 节点始终硬失败，不能配置 `continueOnFailure`。
 
@@ -489,14 +513,18 @@ Go 接口：
 
 ```go
 type RuntimeContext interface {
+    // Phase 1 可用
     Env() ReadOnlyEnv
     Trace() TraceSink
-    Model() ModelGateway
-    Knowledge() KnowledgeReader
+    Knowledge() KnowledgeReader          // Retrieve() 知识检索
     Actions() ActionSummaryReader
-    Logger() Logger
+    Logger() Logger                      // 结构化日志（Phase 1 提供基本实现）
     Request() RequestMetadata
-    Error() *RuntimeErrorSummary
+    Error() *RuntimeErrorSummary         // fallback 模式下可读的错误上下文
+    // Phase 1 可用（模型调用）
+    Model() ModelGateway                 // LLM 调用（Phase 1 提供基于环境密钥的最小实现）
+    // Phase 2 可用
+    // HTTP() HTTPCaller                 // 外部 API 调用
 }
 
 type ActionSummaryReader interface {
@@ -509,20 +537,22 @@ type ActionSummaryReader interface {
 - `Env()` 只暴露环境解析后的只读配置。
 - `Trace()` 只允许写 span 和字段。
 - `Model()` 只暴露模型调用能力。
-- `Knowledge()` 只暴露检索能力。
+- `Knowledge()` 只暴露检索能力（`Retrieve(ctx, query, topK) → KnowledgeResult`），Phase 1 实现关键词检索。
 - `Logger()` 只允许结构化日志和脱敏。
 - `Request()` 提供 trigger、signal、raw payload 等请求元数据。
 - `Error()` 仅在 fallback 模式下可读。
 - `Actions()` 只读返回已完成 action 的结构化摘要；它只用于后续节点读取执行结果，不改变控制流，不回写 action 状态。
 - `human_handoff` 在 fallback 模式下必须读取 `Error()`，并将 `failedNode`、`type`、`message` 写入 action 输出和 Trace。
 
-内置 MVCR 组件：
+内置 MVCR 组件（Phase 1，版本均为 `@1.0.0`）：
 
-- `intent.support-router`
-- `retriever.local-keyword`
-- `agent.cited-answer`
-- `action.human-handoff`
-- `action.mock-create-service-ticket`
+- `llm-classifier` — `registry.intent.support-router@1.0.0`（通用意图分类器）
+- `llm-classifier` — `registry.intent.beverage-router@1.0.0`（饮品场景意图分类器）
+- `llm-classifier` — `registry.intent.severity-beverage@1.0.0`（饮品场景严重度判断）
+- `retriever` — `registry.retriever.local-keyword@1.0.0`（关键词检索器）
+- `llm-generator` — `registry.agent.cited-answer@1.0.0`（带引用回答生成器）
+- `human-handoff` — `registry.action.human-handoff@1.0.0`（人工升级）
+- `mock action` — `registry.action.mock-create-service-ticket@1.0.0`（mock 工单创建）
 
 ### 7.9 Component Registry
 
@@ -532,13 +562,13 @@ type ActionSummaryReader interface {
 registry.<namespace>.<name>@<semver>
 ```
 
-本地目录：
+本地目录（Phase 2 完整本地注册表布局）：
 
 ```text
 components/registry/<namespace>/<name>/<version>/component.yaml
 ```
 
-MVCR 可用内置 map 实现，但接口必须按 registry 设计：
+M1/MVCR 最小实现使用内置 map，并可扫描方案目录下的自定义组件；不要求实现完整 `components/registry/<namespace>/<name>/<version>/` 目录规范、组件发布命令或远程市场。Phase 2 起再补齐上述本地注册表布局和组件元数据管理。无论阶段如何，代码接口必须按 registry 设计：
 
 ```go
 type ComponentRegistry interface {
@@ -575,6 +605,7 @@ Phase 1：
 - `context.knowledge.retrieve(query, topK)`。
 - 每条非空 JSONL 记录必须至少包含一个可检索文本字段和引用字段，默认引用字段为 `source_ref`。
 - 文件缺失、JSONL 解析失败、非空记录缺少可检索文本字段或引用字段属于 block，必须终止 `solution run` 启动；记录数为 0 属于 warning。
+- 知识索引与质量报告生成必须先写入临时目录/临时文件，全部成功后再原子替换可见结果；失败时保留上一份可用索引和报告。
 
 Phase 2+：
 
@@ -585,10 +616,11 @@ Phase 2+：
 
 Go/Python 边界：
 
-- Phase 1 保持纯 Go：`solution run` 直接加载 JSONL 并构建内存关键词索引。
+- Phase 1 保持纯 Go：`solution run` 直接加载 JSONL 并构建内存关键词索引。可检索文本字段按优先级从 `answer`、`resolution`、`question`、`symptom`、`cause`、`description`、`content` 中选取第一个非空字段；Manifest Schema 字段与 JSONL 实际字段通过此优先级规则映射。
 - Phase 2 的 `solution ingest` 仍由 Go CLI 编排；当知识源是 PDF、Word、图片或 Markdown 等重文档时，Go 调用 Python Worker 生成标准 JSONL 中间产物。
 - Go ingest 读取 Python 输出的 JSONL，执行 Schema 门禁、质量报告生成和 PostgreSQL 写入。
-- Python Worker 可部署为本地子进程、独立容器或 Kubernetes Job，但接口先保持“输入文件/目录 -> 输出 JSONL + worker report”，不引入 gRPC 作为第一版强依赖。
+- Python Worker 在 M2 阶段明确采用本地子进程调用方式（Go 启动 Python 子进程，传递文件路径参数，Python 退出码 0 表示成功，Go 读取输出 JSONL 和质量报告）；独立容器或 Kubernetes Job 为生产演进方向。接口保持“输入文件/目录 -> 输出 JSONL + worker report”，不引入 gRPC 作为第一版强依赖。
+- Phase 2 ingest 的 PostgreSQL 写入、索引切换和质量报告更新必须保持事务性或等价原子性，避免 release 读取半更新知识状态。
 
 embedding 配置：
 
@@ -662,6 +694,7 @@ MVCR：
 - 每次请求一个 Trace。
 - 每个节点一个 span。
 - 失败路径写 `error`。
+- `logInputs: masked` 时对用户输入字段做脱敏处理（哈希或截断）；`raw_payload` 不写入 Trace；输出中的 PII 字段在写入前脱敏。
 
 生产：
 
@@ -751,13 +784,14 @@ Content-Type: application/json
 
 - 返回 401。
 - 不进入 WorkflowExecutor。
-- 写安全审计日志。
+- 若请求命中已声明的 Sensor endpoint，写拒绝类 Trace；无法归属到任何 Solution/Sensor 的未知路径或扫描流量只写平台安全审计日志。
+- Trace 和审计日志不得写入 token 值。
 
 Signal 类型不匹配：
 
 - 返回 400。
 - 不进入 WorkflowExecutor。
-- 写拒绝类 Trace 或审计日志。
+- 写拒绝类 Trace。
 
 ## 9. CLI 规范
 
@@ -811,12 +845,15 @@ solution validate manifest.yaml --json
 
 ### 10.1 MVCR 本地存储
 
+MVCR 使用 Manifest 所在目录下的 `data/<env>/` 作为本地存储根目录，与设计文档和用户故事示例中的路径约定一致：
+
 ```text
-.solution/
-  traces/
-  reports/
-  indexes/
-  releases/
+data/
+  <env>/
+    traces/
+    reports/
+    indexes/
+    releases/
 ```
 
 适合：
@@ -888,14 +925,15 @@ Release Checker 是同步阻断器。
 - 输出 machine-readable report。
 - 所有检查必须可单测。
 - `action_credentials_configured` 检查 action 组件配置中的 `apiKeyRef`、`tokenRef`、`secretRef` 等敏感引用是否存在且非空。
-- `knowledge_quality_passed` 读取 `dirname(tracePath)/reports/knowledge-quality.json` 或 Phase 2 ingest 报告；报告缺失、fingerprint 不匹配、超过 24 小时或存在 block 项都失败。报告写入必须先落到临时文件，再原子 rename 到最终路径。
-- `eval_gates_passed` 现场执行 `schedule: onRelease` 且 `severity: block` 的评测门禁，或在 fingerprint 匹配且未过期（默认 1 小时）时复用缓存；`schedule: weekly` 只产生告警和报告，不影响 `solution release` 成功退出。
+- `knowledge_quality_passed` 按以下顺序查找质量报告 — 1) 当前环境 `tracePath` 下最近一次 `solution run` 或 `solution ingest` 生成的质量报告；2) 如不存在，`solution release` 直接失败，提示 FDE 先执行 `solution run` 或 `solution ingest` 生成质量报告。`solution release` 只检查不修复。报告必须绑定 `manifest_fingerprint`、`knowledge_config_fingerprint` 和 `knowledge_sources_fingerprint`；任一指纹不匹配、超过 24 小时或存在 block 项都失败。报告写入必须先落到临时文件，再原子 rename 到最终路径。
+- `eval_gates_passed` 现场执行 `schedule: onRelease` 且 `severity: block` 的评测门禁，或在缓存的 `execution_fingerprint`、`dataset_fingerprint` 匹配且未过期（默认 1 小时）时复用缓存。`execution_fingerprint` 必须包含影响执行结果的环境覆盖字段，例如 `defaultModel`、`fallbackModel`、`maxLatencyMs`、模型供应商 endpoint、知识绑定和组件配置；`tracePath`、`retainDays` 等非执行字段不进入该指纹。`schedule: weekly` 只产生告警和报告，不影响 `solution release` 成功退出。
 
 成功产物：
 
 - `solution release` 成功时生成部署产物目录 `./deploy/<env>/`。
 - 目录内至少包含 `docker-compose.yaml`、`.env.example`、运行说明和重建说明。
-- `docker-compose.yaml` 必须启动同一个 Go Runtime 二进制和同一份解析后的 Manifest/config，不得重新实现一套与 `solution run` 行为不同的服务逻辑。
+- `docker-compose.yaml` 必须启动同一个 Go Runtime 二进制，并使用源 Manifest 的只读快照或等价卷挂载，不得重新实现一套与 `solution run` 行为不同的服务逻辑。
+- 部署包不得重写 Manifest 的业务语义；质量报告的 `manifest_fingerprint` 仍基于源 Manifest 文件内容计算，评测缓存使用源 Manifest 与执行性环境覆盖共同计算的 `execution_fingerprint`。
 - 实现可额外生成 K8s 清单或脚本，但目录契约不得变化。
 
 ## 13. 部署架构
@@ -910,7 +948,7 @@ solution run manifest.yaml --env=poc
 
 - HTTP Server。
 - Workflow Runtime。
-- 内置组件。
+- 内置组件：`llm-classifier`（`registry.intent.support-router@1.0.0`、`registry.intent.beverage-router@1.0.0`、`registry.intent.severity-beverage@1.0.0`）、`retriever`（`registry.retriever.local-keyword@1.0.0`）、`llm-generator`（`registry.agent.cited-answer@1.0.0`）、`human-handoff`（`registry.action.human-handoff@1.0.0`）、mock action（`registry.action.mock-create-service-ticket@1.0.0`）。
 - JSONL Knowledge index。
 - Trace file writer。
 
@@ -1137,7 +1175,7 @@ steps:
 - Environment Resolver。
 - HTTP `/chat`、`/health`、`endpointPath`。
 - WorkflowExecutor。
-- 内置组件。
+- 内置组件：`llm-classifier`（`registry.intent.support-router@1.0.0`、`registry.intent.beverage-router@1.0.0`、`registry.intent.severity-beverage@1.0.0`）、`retriever`（`registry.retriever.local-keyword@1.0.0`）、`llm-generator`（`registry.agent.cited-answer@1.0.0`）、`human-handoff`（`registry.action.human-handoff@1.0.0`）、mock action（`registry.action.mock-create-service-ticket@1.0.0`）。
 - JSONL KnowledgeLoader。
 - SensorRegistry。
 - SignalIdempotencyStore。

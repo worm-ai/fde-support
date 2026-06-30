@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -47,15 +49,15 @@ func TestHandleSignalDuplicateWritesAuditTrace(t *testing.T) {
 			"package":        "@world2agent/sensor-webhook",
 		},
 		"event": map[string]any{
-			"type":         "ticket.created",
-			"occurred_at":  1719400000000,
-			"summary":      "Customer reported pump E42 error",
+			"type":        "ticket.created",
+			"occurred_at": 1719400000000,
+			"summary":     "Customer reported pump E42 error",
 		},
 		"source_event": map[string]any{
 			"data": map[string]any{
-				"ticketId":      "T-10086",
-				"productModel":  "PX-9",
-				"description":   "The pump shows E42 after restart. What should I do?",
+				"ticketId":     "T-10086",
+				"productModel": "PX-9",
+				"description":  "The pump shows E42 after restart. What should I do?",
 			},
 		},
 	}
@@ -99,6 +101,64 @@ func TestHandleSignalDuplicateWritesAuditTrace(t *testing.T) {
 	}
 	if writer.records[0].Trigger.Type != "w2a_signal" || writer.records[0].Trigger.Sensor != "ticket_webhook" {
 		t.Fatalf("duplicate trace trigger = %#v, want w2a_signal/ticket_webhook", writer.records[0].Trigger)
+	}
+	bytes, marshalErr := json.Marshal(writer.records[0])
+	if marshalErr != nil {
+		t.Fatalf("marshal duplicate trace: %v", marshalErr)
+	}
+	text := string(bytes)
+	if !strings.Contains(text, `"duplicate":true`) {
+		t.Fatalf("duplicate trace did not serialize duplicate=true: %s", text)
+	}
+	for _, leaked := range []string{"raw_payload", "source_event", "The pump shows E42"} {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("duplicate trace leaked raw W2A payload %q: %s", leaked, text)
+		}
+	}
+}
+
+func TestRejectedSignalTraceDoesNotStoreRawPayload(t *testing.T) {
+	t.Parallel()
+
+	writer := &stubTraceWriter{}
+	router := NewSignalRouter(
+		&manifest.SolutionManifest{
+			Metadata: manifest.MetadataSpec{Name: "lecharm-support-agent", Version: "0.1.0"},
+		},
+		environment.ResolvedEnvironment{EnvironmentName: "poc"},
+		&stubExecutor{response: map[string]any{"traceId": "trace-original"}},
+		w2a.NewMemorySignalIdempotencyStore(),
+		writer,
+	)
+
+	sensor := manifest.SensorSpec{
+		ID:          "ticket_webhook",
+		SignalTypes: []string{"ticket.created"},
+	}
+	payload := map[string]any{
+		"signal_id":      "sig-secret",
+		"schema_version": w2a.SchemaVersion01,
+		"source_event": map[string]any{
+			"data": map[string]any{
+				"password": "clear-text-password",
+			},
+		},
+	}
+
+	_, _, appErr := router.HandleSignal(context.Background(), sensor, payload, "")
+	if appErr == nil {
+		t.Fatalf("expected malformed signal to be rejected")
+	}
+	if len(writer.records) != 1 {
+		t.Fatalf("trace writes = %d, want 1", len(writer.records))
+	}
+	record := writer.records[0]
+	if _, ok := record.Input["raw_payload"]; ok {
+		t.Fatalf("rejected trace stored raw_payload: %#v", record.Input)
+	}
+	bytes, _ := json.Marshal(record)
+	if strings.Contains(string(bytes), "clear-text-password") {
+		t.Fatalf("rejected trace leaked password: %s", string(bytes))
 	}
 }
 

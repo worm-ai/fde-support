@@ -1,11 +1,29 @@
 package manifest
 
 import (
+	"path/filepath"
 	"testing"
 
 	"fde-support/internal/registry"
 	"fde-support/internal/w2a"
 )
+
+func TestM1ExamplesValidate(t *testing.T) {
+	paths := []string{
+		filepath.Join("..", "..", "examples", "after-sales-support", "manifest.yaml"),
+		filepath.Join("..", "..", "examples", "guoran-support", "manifest.yaml"),
+		filepath.Join("..", "..", "templates", "customer-support.yaml"),
+	}
+	validateManifestFiles(t, paths)
+}
+
+func TestM2TemplatesValidate(t *testing.T) {
+	paths := []string{
+		filepath.Join("..", "..", "templates", "data-inquiry.yaml"),
+		filepath.Join("..", "..", "templates", "alert-escalation.yaml"),
+	}
+	validateManifestFiles(t, paths)
+}
 
 func TestManifestValidator(t *testing.T) {
 	t.Parallel()
@@ -75,6 +93,34 @@ func TestManifestValidator(t *testing.T) {
 			},
 			wantCode: "UNKNOWN_KNOWLEDGE_SOURCE",
 		},
+		{
+			name: "unknown release check is rejected",
+			mutate: func(m *SolutionManifest) {
+				m.Delivery.ReleaseChecks = []string{"made_up_check"}
+			},
+			wantCode: "UNKNOWN_RELEASE_CHECK",
+		},
+		{
+			name: "solution type is required",
+			mutate: func(m *SolutionManifest) {
+				m.SolutionType = ""
+			},
+			wantCode: "MISSING_REQUIRED_FIELD",
+		},
+		{
+			name: "unknown solution type is rejected",
+			mutate: func(m *SolutionManifest) {
+				m.SolutionType = "unknown-type"
+			},
+			wantCode: "UNSUPPORTED_SOLUTION_TYPE",
+		},
+		{
+			name: "unsupported api version is rejected",
+			mutate: func(m *SolutionManifest) {
+				m.APIVersion = "solution.codex/v9"
+			},
+			wantCode: "UNSUPPORTED_API_VERSION",
+		},
 	}
 
 	for _, tt := range tests {
@@ -101,10 +147,49 @@ func TestManifestValidator(t *testing.T) {
 	}
 }
 
+func TestValidatorRejectsKnowledgeSourcePathEscape(t *testing.T) {
+	m := minimalManifest()
+	m.Knowledge.Sources[0].URI = "../secret.txt"
+
+	errs := NewValidator(registry.NewBuiltinComponentRegistry(), w2a.NewBuiltinSensorRegistry()).Validate(&m)
+	if !hasCode(errs, "INVALID_KNOWLEDGE_SOURCE_URI") {
+		t.Fatalf("expected INVALID_KNOWLEDGE_SOURCE_URI, got %#v", errs)
+	}
+}
+
+func TestValidatorRejectsAbsoluteKnowledgeSourcePath(t *testing.T) {
+	m := minimalManifest()
+	m.Knowledge.Sources[0].URI = `C:\secret.txt`
+
+	errs := NewValidator(registry.NewBuiltinComponentRegistry(), w2a.NewBuiltinSensorRegistry()).Validate(&m)
+	if !hasCode(errs, "INVALID_KNOWLEDGE_SOURCE_URI") {
+		t.Fatalf("expected INVALID_KNOWLEDGE_SOURCE_URI, got %#v", errs)
+	}
+}
+
+func validateManifestFiles(t *testing.T, paths []string) {
+	t.Helper()
+
+	for _, path := range paths {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			m, err := LoadFile(path)
+			if err != nil {
+				t.Fatalf("load manifest: %v", err)
+			}
+			errs := NewValidator(registry.NewBuiltinComponentRegistry(), w2a.NewBuiltinSensorRegistry()).Validate(m)
+			if len(errs) > 0 {
+				t.Fatalf("expected manifest to validate, got %#v", errs)
+			}
+		})
+	}
+}
+
 func minimalManifest() SolutionManifest {
 	return SolutionManifest{
-		APIVersion: "solution.ai/v1alpha1",
-		Kind:       "Solution",
+		APIVersion:   "solution.codex/v1",
+		Kind:         "Solution",
+		SolutionType: "customer-support",
 		Metadata: MetadataSpec{
 			Name:    "lecharm-support-agent",
 			Version: "0.1.0",
@@ -127,7 +212,7 @@ func minimalManifest() SolutionManifest {
 					ID:         "ticket_triage",
 					Sensor:     "ticket_webhook",
 					SignalType: "ticket.created",
-					RouteTo:    "support_agent",
+					RouteTo:    "classify_intent",
 				},
 			},
 		},
@@ -146,7 +231,7 @@ func minimalManifest() SolutionManifest {
 			{ID: "human_handoff", Category: "action", Ref: "registry.action.human-handoff@1.0.0", Config: map[string]any{"queue": "support-l2"}},
 		},
 		Workflow: WorkflowSpec{
-			Entrypoint: "support_agent",
+			Entrypoint: "classify_intent",
 			OnError: OnErrorSpec{
 				Retry:        1,
 				FallbackNode: "handoff",

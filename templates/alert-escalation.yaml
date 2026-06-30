@@ -1,0 +1,109 @@
+apiVersion: solution.codex/v1
+kind: Solution
+solutionType: alert-escalation
+metadata:
+  name: alert-escalation-template
+  version: 0.1.0
+  owner: fde-team
+  industry: general
+
+perception:
+  sensors:
+    - id: alert_webhook
+      ref: "@world2agent/sensor-webhook@1.0.0"
+      signalTypes:
+        - alert.triggered
+      config:
+        endpointPath: /w2a/alerts
+        authTokenRef: env:W2A_TOKEN
+  triggers:
+    - id: alert_route
+      sensor: alert_webhook
+      signalType: alert.triggered
+      routeTo: evaluate_alert
+
+knowledge:
+  sources:
+    - id: escalation_rules
+      type: jsonl
+      uri: ./data/escalation_rules.jsonl
+      schema: rules
+  schemas:
+    - id: rules
+      fields:
+        - condition
+        - action
+        - priority
+
+components:
+  - id: evaluator
+    category: processor
+    ref: registry.processor.rule-evaluator@1.0.0
+    config:
+      rules:
+        - id: critical_alert
+          field: severity
+          operator: eq
+          value: critical
+          result: immediate_escalation
+          priority: 10
+        - id: high_alert
+          field: severity
+          operator: eq
+          value: high
+          result: escalate_to_l2
+          priority: 5
+  - id: notifier
+    category: action
+    ref: registry.action.http-caller@1.0.0
+    config:
+      url: "https://hooks.example.com/alerts"
+      method: POST
+      bodyTemplate: '{"alert": "{{result}}", "source": "{{source}}"}'
+  - id: handoff
+    category: action
+    ref: registry.action.human-handoff@1.0.0
+    config:
+      queue: alert-l2
+
+workflow:
+  entrypoint: evaluate_alert
+  onError:
+    retry: 1
+    fallbackNode: handoff
+  inputMapping:
+    w2a_signal:
+      severity: signal.source_event.data.severity
+      source: signal.source_event.data.source
+  nodes:
+    - id: evaluate_alert
+      component: evaluator
+      inputs:
+        severity: inputs.severity
+    - id: notify
+      component: notifier
+      continueOnFailure: true
+      inputs:
+        result: evaluate_alert.result
+        source: inputs.source
+    - id: handoff
+      component: handoff
+      inputs:
+        message: inputs.severity
+
+runtime:
+  knowledgeBindings: []
+  modelPolicy:
+    defaultModel: gpt-4.1
+    maxLatencyMs: 8000
+  observability:
+    trace: required
+    logInputs: masked
+
+delivery:
+  environments:
+    - name: poc
+      type: shared_sandbox
+      config:
+        modelKeyRef: env:OPENAI_API_KEY
+        tracePath: ./.solution/traces

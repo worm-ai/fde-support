@@ -9,14 +9,22 @@
 - 所有 Manifest 示例必须能通过 `solution validate`，不能引用未声明的组件、节点、知识源、Sensor 或环境。
 - 所有敏感配置必须使用 `env:VAR_NAME` 或后续支持的密钥引用格式，不能在 Manifest 中写明文密钥。
 - Chat 与 W2A Signal 触发路径必须先归一化为标准 `RuntimeRequest`，再进入同一个 WorkflowExecutor。
+- `workflow.entrypoint` 必须是 `workflow.nodes` 中第一个节点的 `id`；`perception.triggers[].routeTo` 必须等于 `workflow.entrypoint`。
 - `workflow.inputMapping` 在 MVP 中只支持简单字段路径；必填映射字段缺失时，SignalRouter 返回 400，不进入工作流，也不触发 fallback。
 - 工作流节点必须通过 `workflow.nodes[].inputs` 显式声明组件输入；组件不能隐式读取整个 `step_outputs`。
+- 组件不可恢复的系统异常必须通过返回值 `(nil, error)` 抛出；action 组件的可恢复业务失败通过 `output["status"] = "failed"` 表达，禁止使用 `"error"` 作为 status 值。processor 组件的输出不包含 `status` 字段。
 - MVP 中的 W2A Sensor 采用 Runtime 内置 Webhook 入口模型：Runtime 根据 `perception.sensors[].config.endpointPath` 暴露 HTTP 入口并校验认证；独立 Sensor 进程或 SensorHub 集成属于后续能力。
 - `@world2agent/sensor-webhook@1.0.0` 是 MVP `SensorRegistry` 的内置 Sensor 引用，不要求从 npm 安装，也不通过 `ComponentRegistry` 解析；版本必须显式 pin。
+- W2A Signal 幂等缓存仅在认证、envelope 校验、Sensor 来源校验和 Signal 类型校验通过后才查询/写入；认证失败的请求不参与幂等缓存。
+- `RuntimeContext.Model()` 在 Phase 1 提供基于环境密钥的最小模型网关实现（如调用 OpenAI API）；`HTTP()` 能力在 Phase 2 可用。
 - W2A Sensor 只负责把外部事件标准化为 W2A Signal，不负责业务决策、工作流编排、RAG、动作执行或发布治理。
-- Phase 1 只验证 Runtime 内核、统一组件接口、mock action、Trace、W2A Signal 入口和启动时 JSONL 知识加载；真实知识摄取流水线、真实外部系统调用、知识工作台和增量索引不进入 Phase 1。
+- SignalRouter 必须校验 `signal.source.sensor_id` 等于当前 endpoint 对应的 Manifest Sensor ID，防止 Signal 来源伪造。
+- Phase 1 只验证 Runtime 内核、统一组件接口和 7 个内置组件实例（`support-router`、`beverage-router`、`severity-beverage`、`local-keyword`、`cited-answer`、`human-handoff`、`mock-create-service-ticket`）、Trace、W2A Signal 入口和启动时 JSONL 知识加载；真实知识摄取流水线、真实外部系统调用、知识工作台和增量索引不进入 Phase 1。
 - Phase 1 检索组件统一使用 `registry.retriever.local-keyword@1.0.0`；混合检索和向量检索属于 Phase 2+。
+- Manifest 中引用的组件版本号必须与平台内置注册表中已注册的版本一致；Phase 1 内置组件版本均为 `@1.0.0`。
+- 所有组件的 citations 统一使用 `string[]` 格式（`"source#ref"`），由知识加载时统一生成该格式的引用字符串。
 - `knowledge.sources[].uri`、`evaluation.datasets[].uri` 等相对路径均以 Manifest 文件所在目录为基准解析。
+- Phase 1 JSONL 知识加载时，可检索文本字段按优先级从 `answer`、`resolution`、`question`、`symptom`、`cause`、`description`、`content` 中选取第一个非空字段；Manifest Schema 字段与 JSONL 实际字段通过此优先级规则映射。
 - `sessionId` 在 MVP 中仅用于请求关联，不提供跨轮会话记忆。
 
 ---
@@ -33,6 +41,7 @@
 | STORY-006a | 手动触发知识摄取并执行质量门禁 | P1 | 3 | 知识工程流水线 |
 | STORY-006b | 知识变更自动化与专家工作台 | P2 | 5 | 知识工程流水线 |
 | STORY-007 | 复用于新品牌——资产复用与快速交付 | P1 | 3 | 可组合资产与模板 |
+| STORY-008 | 通过 http-caller 组件对接客户外部系统 API | P1 | 3 | 组件与工作流 |
 
 ---
 
@@ -75,7 +84,7 @@
 3. **边界场景：知识源文件为空**
    - Given 声明的 JSONL 知识源文件存在但没有任何知识单元
    - When 执行 `solution run`
-   - Then 服务可启动，但回答问题时应返回“当前知识库为空”的降级提示，并写入 Trace，而非报错崩溃
+   - Then 服务可启动，但回答问题时应返回受控降级响应或空引用结果，并写入 Trace，而非报错崩溃
 
 4. **异常场景：知识单元缺少引用字段**
    - Given JSONL 知识源中某条非空记录缺少默认引用字段 `source_ref`
@@ -94,13 +103,15 @@
 **核心 Manifest 片段（初次 PoC）**
 
 ```yaml
-apiVersion: solution.ai/v1alpha1
+apiVersion: solution.codex/v1
 kind: Solution
 metadata:
   name: lecharm-support-agent
   version: 0.1.0
   owner: fde-zhouyuan
   industry: beverage
+
+solutionType: customer-support
 
 knowledge:
   sources:
@@ -131,18 +142,18 @@ components:
       requireCitation: true
   - id: answer_generator
     category: processor
-    ref: registry.agent.cited-answer@1.2.0
+    ref: registry.agent.cited-answer@1.0.0
     config:
       style: concise
       requireGrounding: true
   - id: human_handoff
     category: action
-    ref: registry.action.mock-human-handoff@1.0.0
+    ref: registry.action.human-handoff@1.0.0
     config:
       queue: support-l2
 
 workflow:
-  entrypoint: support_agent
+  entrypoint: classify_intent
   onError:
     retry: 1
     fallbackNode: handoff
@@ -235,7 +246,7 @@ delivery:
 
 **完成定义**
 
-- [ ] Golden Case 的 JSONL 格式文档已提供，并支持 `runtime_request_jsonl` 输入模型
+- [ ] Golden Case 的 JSONL 格式文档已提供，并支持 `runtime_request_jsonl` 输入模型；Golden Case 中的 `expected.intent` 必须在组件声明的 `intents` 列表内
 - [ ] `solution evaluate` 命令在 Phase 3 可用，输出结果可读，且 `--json` 提供 `warnings` 与 `warnings_exist`
 - [ ] 门禁阻断功能有效，未通过时禁止后续流程
 - [ ] 评测结果与 Trace 数据关联，可下钻分析
@@ -357,7 +368,7 @@ perception:
     - id: ticket_triage
       sensor: ticket_webhook
       signalType: ticket.created
-      routeTo: support_agent
+      routeTo: classify_intent
 
 workflow:
   inputMapping:
@@ -394,13 +405,13 @@ workflow:
    - Given 工作流中 `check_critical` 组件接收到 `intent: complaint` 且内容包含“呕吐”“医疗”等关键词
    - When 该节点输出 `{"level":"critical"}`
    - Then `auto_create_ticket` 节点被触发，mock action 返回 `{"status":"created","ticketId":"mock-T-20001"}`
-   - And 最终回答包含“已为您创建工单 mock-T-20001，专员将联系您”
+   - And 最终响应的 `actions` 数组包含该工单创建结果，前端或调用方可据此展示“已为您创建工单 mock-T-20001，专员将联系您”
 
 2. **异常场景：外部系统不可用时降级**
    - Given mock `create_ticket` 组件被配置为模拟失败，且 `auto_create_ticket` 节点显式声明 `continueOnFailure: true`
    - When 条件满足，执行该 action
    - Then 组件返回 `{"status":"failed"}`，工作流继续执行后续节点，同时在 Trace 中记录错误信息
-   - And 最终回答提示用户“系统繁忙，请稍后重试或联系人工客服”
+   - And 最终响应的 `actions` 数组保留失败状态，前端或调用方可据此展示“系统繁忙，请稍后重试或联系人工客服”
 
 3. **边界场景：非紧急客诉不触发 action**
    - Given 输入内容为“口感偏甜”，`check_critical` 输出 `level: normal`
@@ -409,12 +420,14 @@ workflow:
 
 **完成定义**
 
-- [ ] `severity_check` 和 mock `create_ticket` 组件已在本地注册表中注册并可引用
+- [ ] `severity_check`（`registry.intent.severity-beverage@1.0.0`）和 mock `create_ticket`（`registry.action.mock-create-service-ticket@1.0.0`）组件已在平台内置注册表中注册并可引用；两者均为 Phase 1 平台内置组件，无需 FDE 按 Component SDK 自定义实现
 - [ ] 组件按条件正确触发/跳过，action 返回结构化输出
 - [ ] action 的调用参数和返回结果完整记录在 Trace 中
 - [ ] 默认 action 失败会阻断工作流；只有显式配置 `continueOnFailure: true` 的节点才允许失败后继续
 
 **Manifest 新增组件及工作流节点**
+
+> 以下仅展示新增部分；`human_handoff`、`intent_classifier`、`retriever`、`answer_generator` 等已有组件和工作流节点保持不变。
 
 ```yaml
 components:
@@ -475,7 +488,7 @@ workflow:
    - When 执行 `solution release lecharm-support.yaml --env=production`
    - Then 平台依次执行 `model_credentials_configured`、`sensor_credentials_configured`、`action_credentials_configured`、`signal_ingress_reachable`、`knowledge_quality_passed`、`eval_gates_passed`、`observability_enabled`、`security_baseline_passed` 检查
    - And 全部通过后，在 `./deploy/production/` 下生成 `docker-compose.yaml`、`.env.example`、运行说明和重建说明
-   - And `docker-compose.yaml` 启动同一个 Runtime 二进制和同一份 Manifest/config，行为与 `solution run` 等价
+   - And `docker-compose.yaml` 启动同一个 Runtime 二进制，并使用源 Manifest 的只读快照或等价卷挂载，行为与 `solution run` 等价
    - And 工作流节点、组件引用、知识 Schema 与 PoC 完全一致
 
 2. **异常场景：评测门禁未通过**
@@ -587,15 +600,29 @@ delivery:
 - [ ] `conflicting_answers` 的 warn 语义有效
 - [ ] 质量报告可被 `knowledge_quality_passed` release check 消费
 
-**Manifest 中的知识质量门禁**
+**Manifest 中的知识质量门禁（`knowledge` 段下新增）**
+
+说明：以下 `{name, required}` 字段对象语法属于 Phase 2 `solution ingest` 能力。Phase 1 的 `knowledge.schemas[].fields` 仍按字符串字段列表或结构说明处理，不执行完整 `required: true` 门禁；Phase 1 只校验 JSONL 记录至少包含一个可检索文本字段和引用字段。
+
 ```yaml
-qualityGates:
-  - type: missing_required_fields
-    severity: block
-    scope: [faq]
-  - type: conflicting_answers
-    severity: warn
-    scope: [faq]
+knowledge:
+  schemas:
+    - id: faq
+      fields:
+        - name: symptom
+        - name: cause
+        - name: resolution
+          required: true
+        - name: product_model
+        - name: source_ref
+          required: true
+  qualityGates:
+    - type: missing_required_fields
+      severity: block
+      scope: [faq]
+    - type: conflicting_answers
+      severity: warn
+      scope: [faq]
 ```
 
 ---
@@ -709,20 +736,115 @@ evaluation:
       uri: ./data/guoran/evals/golden.jsonl   # 修改
 ```
 
+## STORY-008：通过 http-caller 组件对接客户外部系统 API
+
+**基础信息**
+
+- 故事ID：STORY-008
+- 故事标题：通过 http-caller 组件对接客户外部系统 API
+- 所属模块：组件与工作流（action 组件）
+- 优先级：P1
+- 故事点：3
+- 负责人：FDE 周远，组件注册表团队
+- 计划迭代：MVP Phase 2
+
+**核心用户故事**
+
+> 作为 **FDE**，
+> 我想要 **在 Manifest 中配置 `http-caller` 组件，通过声明式 YAML 调用客户外部系统 API（CRM 查询、通知 Webhook、工单系统集成）**，
+> 以便 **在客户现场对接真实外部系统时无需编写自定义 Go 组件，通过纯配置完成 HTTP 集成**。
+
+**验收标准**
+
+1. **正常场景：配置 http-caller 调用外部 API**
+   - Given Manifest 中声明 `http-caller` 组件，配置了 URL、HTTP 方法、Headers 模板和 Body 模板
+   - When 工作流执行到 `http-caller` 节点
+   - Then 组件发起 HTTP 请求到配置的目标 URL
+   - And 返回响应状态码、响应头和响应体给下游节点引用（`lookup_customer.status`、`lookup_customer.body`）
+   - And HTTP 调用记录在 Trace 中（目标 host、方法、状态码、耗时和脱敏后的错误），不记录密钥和完整 URL query
+
+2. **异常场景：外部系统不可达时降级**
+   - Given `http-caller` 配置了 `continueOnFailure: true`
+   - When 外部系统不可达或返回 5xx
+   - Then 组件返回 `{"status":"failed"}`
+   - And 工作流继续执行后续节点
+   - And Trace 中记录失败信息
+
+3. **边界场景：认证信息通过环境变量注入**
+   - Given `http-caller` 的 `headers` 中使用 `env:CRM_API_KEY` 引用
+   - When 组件执行
+   - Then 解析后的 API Key 用于请求头
+   - And 密钥值不出现在 Trace 或日志中
+
+4. **边界场景：超时控制**
+   - Given `http-caller` 配置了 `timeoutMs: 5000`
+   - When 外部系统响应超过 5 秒
+   - Then 组件超时返回失败
+   - And Trace 记录超时事件
+
+**完成定义**
+
+- [ ] `http-caller`（`registry.action.http-caller@1.0.0`）已在平台内置注册表中注册，Phase 2 可用
+- [ ] `RuntimeContext.HTTP()` 能力在 Phase 2 可用，供 `http-caller` 组件调用
+- [ ] HTTP 请求/响应摘要写入 Trace（脱敏）
+- [ ] FDE 可通过 Manifest YAML 配置外部 API 调用，无需编写自定义 Go 组件
+- [ ] 支持 `env:VAR_NAME` 引用注入认证信息
+
+**核心 Manifest 片段**
+
+```yaml
+components:
+  # ...已有组件...
+  - id: crm_lookup
+    category: action
+    ref: registry.action.http-caller@1.0.0
+    config:
+      url: https://crm.example.com/api/v1/customers
+      method: POST
+      headers:
+        Authorization: env:CRM_API_KEY
+        Content-Type: application/json
+      bodyTemplate: |
+        {"phone": "{{inputs.phone}}"}
+      timeoutMs: 5000
+      continueOnFailure: true
+```
+
+```yaml
+workflow:
+  nodes:
+    # ...已有节点...
+    - id: lookup_customer
+      component: crm_lookup
+      inputs:
+        phone: inputs.phone
+    - id: generate_answer
+      component: answer_generator
+      inputs:
+        message: inputs.message
+        customer_info: lookup_customer.body
+```
+
+**与 STORY-004 的关系**
+
+STORY-004 使用 `mock-create-service-ticket` 模拟工单创建，STORY-008 提供真实的 HTTP 调用能力。两者互补：mock action 用于 PoC 演示，`http-caller` 用于生产对接。FDE 可在 POC 阶段使用 mock，在发布到生产时替换为 `http-caller` + 真实 endpoint。
+
 ---
 
 ## 附录：跨故事共用的 Manifest 完整示例
 
-以下是 STORY-001 至 STORY-004 整合后的 Manifest 完整版，供实现参考：
+以下是 STORY-001 至 STORY-008 整合后的 Manifest 完整版，供实现参考：
 
 ```yaml
-apiVersion: solution.ai/v1alpha1
+apiVersion: solution.codex/v1
 kind: Solution
 metadata:
   name: lecharm-support-agent
   version: 0.1.0
   owner: fde-zhouyuan
   industry: beverage
+
+solutionType: customer-support
 
 perception:
   sensors:
@@ -736,7 +858,7 @@ perception:
     - id: ticket_triage
       sensor: ticket_webhook
       signalType: ticket.created
-      routeTo: support_agent
+      routeTo: classify_intent
 
 knowledge:
   sources:
@@ -771,7 +893,7 @@ components:
       criticalKeywords: ["呕吐", "医疗", "中毒", "玻璃"]
   - id: answer_generator
     category: processor
-    ref: registry.agent.cited-answer@1.2.0
+    ref: registry.agent.cited-answer@1.0.0
     config:
       style: concise
       requireGrounding: true
@@ -788,7 +910,7 @@ components:
       queue: support-l2
 
 workflow:
-  entrypoint: support_agent
+  entrypoint: classify_intent
   onError:
     retry: 1
     fallbackNode: handoff

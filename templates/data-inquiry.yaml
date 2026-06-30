@@ -1,0 +1,89 @@
+apiVersion: solution.codex/v1
+kind: Solution
+solutionType: data-inquiry
+metadata:
+  name: data-inquiry-template
+  version: 0.1.0
+  owner: fde-team
+  industry: general
+
+perception:
+  sensors: []
+  triggers: []
+
+knowledge:
+  sources:
+    - id: product_data
+      type: csv
+      uri: ./data/products.csv
+      schema: products
+  schemas:
+    - id: products
+      fields:
+        - name
+        - category
+        - price
+        - stock
+
+components:
+  - id: classifier
+    category: processor
+    ref: registry.intent.support-router@1.0.0
+    config:
+      intents:
+        - product_inquiry
+        - stock_check
+        - pricing
+  - id: data_fetcher
+    category: processor
+    ref: registry.processor.data-query@1.0.0
+    config:
+      source: product_data
+  - id: generator
+    category: processor
+    ref: registry.agent.cited-answer@1.0.0
+    config:
+      requireGrounding: false
+
+workflow:
+  entrypoint: classify
+  onError:
+    retry: 1
+  inputMapping:
+    chat:
+      message: request.message
+  nodes:
+    - id: classify
+      component: classifier
+      inputs:
+        message: inputs.message
+    - id: query_data
+      component: data_fetcher
+      inputs:
+        query: inputs.message
+    - id: format_result
+      component: generator
+      inputs:
+        message: inputs.message
+        passages: query_data.rows
+        citations: query_data.citations
+
+runtime:
+  knowledgeBindings:
+    - component: data_fetcher
+      sources:
+        - product_data
+  modelPolicy:
+    defaultModel: gpt-4.1
+    maxLatencyMs: 8000
+  observability:
+    trace: required
+    logInputs: masked
+
+delivery:
+  environments:
+    - name: poc
+      type: shared_sandbox
+      config:
+        modelKeyRef: env:OPENAI_API_KEY
+        tracePath: ./.solution/traces

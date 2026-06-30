@@ -2,9 +2,13 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
+	"time"
+
+	"fde-support/internal/shared"
 )
 
 type intentClassifier struct {
@@ -241,4 +245,257 @@ func synthesizeAnswer(message string, passages []any, actions []ActionSummary) s
 		return fmt.Sprintf("%s 已为您创建工单 %s，专员将联系您。", first, createdTicket)
 	}
 	return first
+}
+
+// --- M2 Phase 2 builtin components ---
+
+// llmExtractor extracts structured data from text using the model gateway.
+type llmExtractor struct {
+	baseComponent
+	schema map[string]string
+}
+
+func newLLMExtractor(id string, cfg map[string]any) Component {
+	schema := map[string]string{}
+	if raw, ok := cfg["schema"].(map[string]any); ok {
+		for k, v := range raw {
+			if s, ok := v.(string); ok {
+				schema[k] = s
+			}
+		}
+	}
+	return &llmExtractor{
+		baseComponent: baseComponent{id: id, category: CategoryProcessor, config: cfg},
+		schema:        schema,
+	}
+}
+
+func (c *llmExtractor) Run(ctx context.Context, input map[string]any, runtime RuntimeContext) (map[string]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	text, _ := input["text"].(string)
+	if text == "" {
+		text, _ = input["message"].(string)
+	}
+	model := runtime.Model()
+	if model == nil {
+		return map[string]any{"status": "failed", "error": map[string]any{"code": "MODEL_UNAVAILABLE", "message": "model gateway not available"}}, nil
+	}
+	resp, err := model.Generate(ctx, ModelGenerateRequest{
+		Messages: []ModelMessage{{Role: "user", Content: text}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"extracted": resp.Content, "status": "ok"}, nil
+}
+
+// dataQuery queries tabular data sources using SQL-like syntax.
+type dataQuery struct {
+	baseComponent
+	source string
+	query  string
+}
+
+func newDataQuery(id string, cfg map[string]any) Component {
+	source, _ := cfg["source"].(string)
+	query, _ := cfg["query"].(string)
+	return &dataQuery{
+		baseComponent: baseComponent{id: id, category: CategoryProcessor, config: cfg},
+		source:        source,
+		query:         query,
+	}
+}
+
+func (c *dataQuery) Run(ctx context.Context, input map[string]any, runtime RuntimeContext) (map[string]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	query := c.query
+	if query == "" {
+		query, _ = input["query"].(string)
+	}
+	result, err := runtime.Knowledge().Retrieve(ctx, query, 10)
+	if err != nil {
+		return nil, err
+	}
+	citations := make([]any, 0, len(result.Citations))
+	for _, citation := range result.Citations {
+		citations = append(citations, map[string]any{"source": citation.Source, "ref": citation.Ref})
+	}
+	return map[string]any{"rows": result.Raw, "count": len(result.Raw), "citations": citations, "status": "ok"}, nil
+}
+
+// ruleEvaluator evaluates a list of rules against the input.
+type ruleEvaluator struct {
+	baseComponent
+	rules []ruleSpec
+}
+
+type ruleSpec struct {
+	ID       string
+	Field    string
+	Operator string
+	Value    any
+	Result   string
+	Priority int
+}
+
+func newRuleEvaluator(id string, cfg map[string]any) Component {
+	var rules []ruleSpec
+	if raw, ok := cfg["rules"].([]any); ok {
+		for _, item := range raw {
+			if m, ok := item.(map[string]any); ok {
+				r := ruleSpec{}
+				if v, ok := m["id"].(string); ok {
+					r.ID = v
+				}
+				if v, ok := m["field"].(string); ok {
+					r.Field = v
+				}
+				if v, ok := m["operator"].(string); ok {
+					r.Operator = v
+				}
+				r.Value = m["value"]
+				if v, ok := m["result"].(string); ok {
+					r.Result = v
+				}
+				if v, ok := m["priority"]; ok {
+					f, _ := shared.ToFloat64(v)
+					r.Priority = int(f)
+				}
+				rules = append(rules, r)
+			}
+		}
+	}
+	return &ruleEvaluator{
+		baseComponent: baseComponent{id: id, category: CategoryProcessor, config: cfg},
+		rules:         rules,
+	}
+}
+
+func (c *ruleEvaluator) Run(ctx context.Context, input map[string]any, runtime RuntimeContext) (map[string]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	matched := []map[string]any{}
+	for _, rule := range c.rules {
+		fieldValue, ok := input[rule.Field]
+		if !ok {
+			continue
+		}
+		match := false
+		switch rule.Operator {
+		case "eq", "==", "equals":
+			match = fmt.Sprint(fieldValue) == fmt.Sprint(rule.Value)
+		case "neq", "!=":
+			match = fmt.Sprint(fieldValue) != fmt.Sprint(rule.Value)
+		case "contains":
+			match = strings.Contains(strings.ToLower(fmt.Sprint(fieldValue)), strings.ToLower(fmt.Sprint(rule.Value)))
+		case "gt", ">":
+			fv, _ := shared.ToFloat64(fieldValue)
+			rv, _ := shared.ToFloat64(rule.Value)
+			match = fv > rv
+		case "lt", "<":
+			fv, _ := shared.ToFloat64(fieldValue)
+			rv, _ := shared.ToFloat64(rule.Value)
+			match = fv < rv
+		default:
+			match = fmt.Sprint(fieldValue) == fmt.Sprint(rule.Value)
+		}
+		if match {
+			matched = append(matched, map[string]any{"rule": rule.ID, "result": rule.Result, "priority": rule.Priority})
+		}
+	}
+	if len(matched) == 0 {
+		return map[string]any{"matched": false, "status": "ok"}, nil
+	}
+	best := matched[0]
+	for _, m := range matched[1:] {
+		if p, _ := m["priority"].(int); p > best["priority"].(int) {
+			best = m
+		}
+	}
+	return map[string]any{"matched": true, "rule": best["rule"], "result": best["result"], "matches": matched, "status": "ok"}, nil
+}
+
+// httpCaller calls external HTTP APIs.
+type httpCaller struct {
+	baseComponent
+	urlTemplate    string
+	method         string
+	headers        map[string]string
+	bodyTemplate   string
+	timeoutMs      int
+	continueOnFail bool
+}
+
+func newHTTPCaller(id string, cfg map[string]any) Component {
+	url, _ := cfg["url"].(string)
+	method, _ := cfg["method"].(string)
+	if method == "" {
+		method = "POST"
+	}
+	timeoutMs := intConfig(cfg, "timeoutMs", 5000)
+	continueOnFail := boolConfig(cfg, "continueOnFailure", false)
+	headers := map[string]string{}
+	if raw, ok := cfg["headers"].(map[string]any); ok {
+		for k, v := range raw {
+			if s, ok := v.(string); ok {
+				headers[k] = s
+			}
+		}
+	}
+	bodyTemplate, _ := cfg["bodyTemplate"].(string)
+	return &httpCaller{
+		baseComponent:  baseComponent{id: id, category: CategoryAction, config: cfg},
+		urlTemplate:    url,
+		method:         method,
+		headers:        headers,
+		bodyTemplate:   bodyTemplate,
+		timeoutMs:      timeoutMs,
+		continueOnFail: continueOnFail,
+	}
+}
+
+func (c *httpCaller) Run(ctx context.Context, input map[string]any, runtime RuntimeContext) (map[string]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	timeout := time.Duration(c.timeoutMs) * time.Millisecond
+	if c.timeoutMs <= 0 {
+		timeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	url := c.urlTemplate
+	for k, v := range input {
+		url = strings.ReplaceAll(url, "{{"+k+"}}", fmt.Sprint(v))
+	}
+	body := c.bodyTemplate
+	for k, v := range input {
+		body = strings.ReplaceAll(body, "{{"+k+"}}", fmt.Sprint(v))
+	}
+
+	caller := runtime.HTTP()
+	if caller == nil {
+		return nil, fmt.Errorf("http.call capability is not available")
+	}
+	resp, err := caller.Call(ctx, HTTPCallRequest{
+		URL:     url,
+		Method:  c.method,
+		Headers: c.headers,
+		Body:    body,
+	})
+	if err != nil {
+		return map[string]any{"status": "failed", "error": map[string]any{"code": "HTTP_REQUEST_FAILED", "message": err.Error()}}, nil
+	}
+
+	var parsed any
+	if err := json.Unmarshal([]byte(resp.Body), &parsed); err != nil {
+		parsed = resp.Body
+	}
+	return map[string]any{"status": "ok", "statusCode": float64(resp.StatusCode), "body": parsed}, nil
 }

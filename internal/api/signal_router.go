@@ -123,7 +123,17 @@ func (r *SignalRouter) HandleSignal(ctx context.Context, sensor manifest.SensorS
 func (r *SignalRouter) writeRejectedTrace(ctx context.Context, sensor manifest.SensorSpec, payload map[string]any, appErr *shared.AppError) error {
 	input := map[string]any{"sensor": sensor.ID}
 	if payload != nil {
-		input["raw_payload"] = payload
+		if signalID, ok := payload["signal_id"].(string); ok {
+			input["signal_id"] = signalID
+		}
+		if schemaVersion, ok := payload["schema_version"].(string); ok {
+			input["schema_version"] = schemaVersion
+		}
+		if event, ok := payload["event"].(map[string]any); ok {
+			if eventType, ok := event["type"].(string); ok {
+				input["event_type"] = eventType
+			}
+		}
 	}
 	_, err := r.traceWriter.WriteImmediate(ctx, trace.TraceRecord{
 		Solution:    r.manifest.Metadata.Name,
@@ -131,7 +141,7 @@ func (r *SignalRouter) writeRejectedTrace(ctx context.Context, sensor manifest.S
 		Environment: r.env.EnvironmentName,
 		Trigger:     trace.TriggerSpec{Type: "w2a_signal", Sensor: sensor.ID},
 		Input:       input,
-		Status:      "failed",
+		Status:      "rejected",
 		Error:       &trace.RuntimeErrorSummary{Type: appErr.Code, Message: appErr.Message},
 	})
 	return err
