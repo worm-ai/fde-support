@@ -18,8 +18,8 @@ import (
 	"fde-support/internal/knowledge"
 	"fde-support/internal/manifest"
 	"fde-support/internal/model"
-	"fde-support/internal/release"
 	"fde-support/internal/registry"
+	"fde-support/internal/release"
 	"fde-support/internal/runtimecore"
 	"fde-support/internal/trace"
 	"fde-support/internal/w2a"
@@ -229,7 +229,17 @@ func ReleaseManifestFile(path, envName string) (*release.ReleaseReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	checker := release.NewChecker(m, resolvedEnv)
+	knowledgeStore, _, err := knowledge.Load(context.Background(), m, resolvedEnv)
+	if err != nil {
+		return nil, err
+	}
+	traceWriter := trace.NewFileTraceWriter(resolvedEnv.TracePath)
+	executor, err := runtimecore.NewExecutor(m, resolvedEnv, componentRegistry, knowledgeStore, traceWriter, model.NewMockGateway(), &defaultHTTPCaller{})
+	if err != nil {
+		return nil, err
+	}
+	runner := evaluation.NewRunner(executor, m, evaluation.NewMetricRegistry())
+	checker := release.NewCheckerWithEvaluator(m, resolvedEnv, runner)
 	report, err := checker.Run(context.Background())
 	if err != nil {
 		return nil, err

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"fde-support/internal/environment"
+	"fde-support/internal/evaluation"
 	"fde-support/internal/manifest"
 	"fde-support/internal/shared"
 )
@@ -28,15 +30,24 @@ type ReleaseReport struct {
 	Checks   []CheckResult `json:"checks"`
 }
 
+type EvaluationRunner interface {
+	Run(ctx context.Context, datasetURI string, gates []manifest.EvaluationGateSpec) (*evaluation.EvalReport, error)
+}
+
 // Checker runs all release checks against a manifest and environment.
 type Checker struct {
-	manifest *manifest.SolutionManifest
-	env      environment.ResolvedEnvironment
+	manifest  *manifest.SolutionManifest
+	env       environment.ResolvedEnvironment
+	evaluator EvaluationRunner
 }
 
 // NewChecker creates a release checker.
 func NewChecker(m *manifest.SolutionManifest, env environment.ResolvedEnvironment) *Checker {
 	return &Checker{manifest: m, env: env}
+}
+
+func NewCheckerWithEvaluator(m *manifest.SolutionManifest, env environment.ResolvedEnvironment, evaluator EvaluationRunner) *Checker {
+	return &Checker{manifest: m, env: env, evaluator: evaluator}
 }
 
 // Run executes all configured release checks in order.
@@ -154,11 +165,46 @@ func (c *Checker) checkKnowledgeQuality(ctx context.Context) CheckResult {
 }
 
 func (c *Checker) checkEvalGates(ctx context.Context) CheckResult {
-	if len(c.manifest.Evaluation.Gates) == 0 {
+	hasOnReleaseBlock := false
+	for _, gate := range c.manifest.Evaluation.Gates {
+		if gate.Schedule == "onRelease" && gate.Severity == "block" {
+			hasOnReleaseBlock = true
+			break
+		}
+	}
+	if !hasOnReleaseBlock {
 		return CheckResult{Name: "eval_gates_passed", Passed: true, Severity: "block"}
 	}
-	// For now, eval gates are checked during solution evaluate, not during release
+	if c.evaluator == nil {
+		return CheckResult{Name: "eval_gates_passed", Passed: false, Severity: "block", Message: "evaluation runner is not configured"}
+	}
+	ranDataset := false
+	for _, dataset := range c.manifest.Evaluation.Datasets {
+		if dataset.URI == "" {
+			continue
+		}
+		ranDataset = true
+		report, err := c.evaluator.Run(ctx, c.resolveDatasetURI(dataset.URI), c.manifest.Evaluation.Gates)
+		if err != nil {
+			return CheckResult{Name: "eval_gates_passed", Passed: false, Severity: "block", Message: err.Error()}
+		}
+		for _, gate := range report.GateResults {
+			if gate.Schedule == "onRelease" && gate.Severity == "block" && !gate.Passed {
+				return CheckResult{Name: "eval_gates_passed", Passed: false, Severity: "block", Message: "onRelease evaluation gate failed: " + gate.Metric}
+			}
+		}
+	}
+	if !ranDataset {
+		return CheckResult{Name: "eval_gates_passed", Passed: false, Severity: "block", Message: "evaluation dataset is not configured"}
+	}
 	return CheckResult{Name: "eval_gates_passed", Passed: true, Severity: "block"}
+}
+
+func (c *Checker) resolveDatasetURI(uri string) string {
+	if filepath.IsAbs(uri) || c.manifest.BaseDir == "" {
+		return uri
+	}
+	return filepath.Join(c.manifest.BaseDir, uri)
 }
 
 func (c *Checker) checkObservability(ctx context.Context) CheckResult {
