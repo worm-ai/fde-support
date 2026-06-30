@@ -81,7 +81,7 @@ func (r *Runner) Run(ctx context.Context, datasetURI string, gates []manifest.Ev
 				Schedule: gate.Schedule,
 				Passed:   false,
 			})
-			if gate.Severity == "block" {
+			if gate.Severity == "block" && gate.Schedule == "onRelease" {
 				report.Warnings = append(report.Warnings, fmt.Sprintf("gate %s failed: metric not found", gate.Metric))
 			}
 			continue

@@ -158,10 +158,18 @@ func TestValidatorRejectsKnowledgeSourcePathEscape(t *testing.T) {
 }
 
 func TestValidatorRejectsAbsoluteKnowledgeSourcePath(t *testing.T) {
+	// Unix absolute path
 	m := minimalManifest()
-	m.Knowledge.Sources[0].URI = `C:\secret.txt`
-
+	m.Knowledge.Sources[0].URI = "/etc/passwd"
 	errs := NewValidator(registry.NewBuiltinComponentRegistry(), w2a.NewBuiltinSensorRegistry()).Validate(&m)
+	if !hasCode(errs, "INVALID_KNOWLEDGE_SOURCE_URI") {
+		t.Fatalf("expected INVALID_KNOWLEDGE_SOURCE_URI for /etc/passwd, got %#v", errs)
+	}
+
+	// Windows drive letter path
+	m = minimalManifest()
+	m.Knowledge.Sources[0].URI = `C:\secret.txt`
+	errs = NewValidator(registry.NewBuiltinComponentRegistry(), w2a.NewBuiltinSensorRegistry()).Validate(&m)
 	if !hasCode(errs, "INVALID_KNOWLEDGE_SOURCE_URI") {
 		t.Fatalf("expected INVALID_KNOWLEDGE_SOURCE_URI, got %#v", errs)
 	}

@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -21,9 +23,10 @@ type SignalRouter struct {
 	idempotency w2a.SignalIdempotencyStore
 	traceWriter trace.TraceWriter
 	adapter     w2a.WebhookAdapter
+	auditLog    io.Writer
 }
 
-func NewSignalRouter(m *manifest.SolutionManifest, env environment.ResolvedEnvironment, executor runtimecore.ExecutorLike, store w2a.SignalIdempotencyStore, traceWriter trace.TraceWriter) *SignalRouter {
+func NewSignalRouter(m *manifest.SolutionManifest, env environment.ResolvedEnvironment, executor runtimecore.ExecutorLike, store w2a.SignalIdempotencyStore, traceWriter trace.TraceWriter, auditLog io.Writer) *SignalRouter {
 	return &SignalRouter{
 		manifest:    m,
 		env:         env,
@@ -31,6 +34,7 @@ func NewSignalRouter(m *manifest.SolutionManifest, env environment.ResolvedEnvir
 		idempotency: store,
 		traceWriter: traceWriter,
 		adapter:     w2a.NewWebhookAdapter(),
+		auditLog:    auditLog,
 	}
 }
 
@@ -60,7 +64,10 @@ func (r *SignalRouter) HandleSignal(ctx context.Context, sensor manifest.SensorS
 		tokenValue, ok := r.env.ResolveSecret(expectedToken)
 		if !ok || !bearerMatches(authorization, tokenValue) {
 			appErr := shared.Unauthorized("UNAUTHORIZED_SIGNAL", "Authorization", "invalid bearer token")
-			_ = r.writeRejectedTrace(ctx, sensor, nil, appErr)
+			if r.auditLog != nil {
+				fmt.Fprintf(r.auditLog, "%s [SECURITY] auth_failure sensor=%s\n", time.Now().UTC().Format(time.RFC3339), sensor.ID)
+
+			}
 			return nil, appErr.HTTPStatus, appErr
 		}
 	}

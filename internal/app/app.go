@@ -119,7 +119,7 @@ func BuildRuntime(ctx context.Context, manifestPath string, envName string) (*Ru
 		return nil, err
 	}
 	traceWriter := trace.NewFileTraceWriter(resolvedEnv.TracePath)
-	modelGateway, err := buildModelGateway(resolvedEnv, false)
+	modelGateway, err := buildModelGateway(resolvedEnv, needsModelGateway(m))
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +191,7 @@ func IngestManifestFile(path string) (*knowledge.IngestReport, error) {
 	return knowledge.Ingest(context.Background(), m, resolvedEnv)
 }
 
-func EvaluateManifestFile(path string) (*evaluation.EvalReport, error) {
+func EvaluateManifestFile(path string, envName string) (*evaluation.EvalReport, error) {
 	m, err := manifest.LoadFile(path)
 	if err != nil {
 		return nil, err
@@ -206,7 +206,7 @@ func EvaluateManifestFile(path string) (*evaluation.EvalReport, error) {
 		bytes, _ := json.Marshal(errs)
 		return nil, fmt.Errorf("manifest validation failed: %s", string(bytes))
 	}
-	resolvedEnv, err := environment.Resolve(m, "poc")
+	resolvedEnv, err := environment.Resolve(m, envName)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func EvaluateManifestFile(path string) (*evaluation.EvalReport, error) {
 		return nil, err
 	}
 	traceWriter := trace.NewFileTraceWriter(resolvedEnv.TracePath)
-	modelGateway, err := buildModelGateway(resolvedEnv, false)
+	modelGateway, err := buildModelGateway(resolvedEnv, needsModelGateway(m))
 	if err != nil {
 		return nil, err
 	}
@@ -227,6 +227,7 @@ func EvaluateManifestFile(path string) (*evaluation.EvalReport, error) {
 	metricRegistry := evaluation.NewMetricRegistry()
 	runner := evaluation.NewRunner(executor, m, metricRegistry)
 	ctx := context.Background()
+	var finalReport *evaluation.EvalReport
 	for _, ds := range m.Evaluation.Datasets {
 		if ds.URI == "" {
 			continue
@@ -239,9 +240,31 @@ func EvaluateManifestFile(path string) (*evaluation.EvalReport, error) {
 		if err != nil {
 			return nil, err
 		}
-		return report, nil
+		if finalReport == nil {
+			finalReport = report
+		} else {
+			// Merge: accumulate case counts and average metrics
+			finalReport.TotalCases += report.TotalCases
+			finalReport.PassedCases += report.PassedCases
+			finalReport.Results = append(finalReport.Results, report.Results...)
+			for name, value := range report.Metrics {
+				if prev, ok := finalReport.Metrics[name]; ok {
+					finalReport.Metrics[name] = (prev + value) / 2
+				} else {
+					finalReport.Metrics[name] = value
+				}
+			}
+			finalReport.Warnings = append(finalReport.Warnings, report.Warnings...)
+			// Merge gate results
+			for _, gate := range report.GateResults {
+				finalReport.GateResults = append(finalReport.GateResults, gate)
+			}
+		}
 	}
-	return nil, fmt.Errorf("no evaluation datasets configured")
+	if finalReport == nil {
+		return nil, fmt.Errorf("no evaluation datasets configured")
+	}
+	return finalReport, nil
 }
 
 func ReleaseManifestFile(path, envName string) (*release.ReleaseReport, error) {
@@ -268,7 +291,7 @@ func ReleaseManifestFile(path, envName string) (*release.ReleaseReport, error) {
 		return nil, err
 	}
 	traceWriter := trace.NewFileTraceWriter(resolvedEnv.TracePath)
-	modelGateway, err := buildModelGateway(resolvedEnv, false)
+	modelGateway, err := buildModelGateway(resolvedEnv, needsModelGateway(m))
 	if err != nil {
 		return nil, err
 	}
@@ -311,4 +334,26 @@ func findProjectRoot() string {
 		return wd
 	}
 	return "."
+}
+
+
+// needsModelGateway checks whether any component in the manifest requires model.generate.
+// Returns true if model gateway is needed, false if mock fallback is acceptable.
+func needsModelGateway(m *manifest.SolutionManifest) bool {
+	reg, err := registry.NewBuiltinComponentRegistryFromRoot(m.BaseDir)
+	if err != nil {
+		return false
+	}
+	for _, spec := range m.Components {
+		compDesc, err := reg.Resolve(spec.Ref)
+		if err != nil {
+			continue
+		}
+		for _, req := range compDesc.Requires {
+			if req == "model.generate" {
+				return true
+			}
+		}
+	}
+	return false
 }

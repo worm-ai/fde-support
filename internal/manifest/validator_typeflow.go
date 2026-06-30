@@ -52,9 +52,19 @@ func validateTypeFlow(nodes []WorkflowNodeSpec, descriptors map[string]registry.
 				continue
 			}
 			upstreamNode := nodes[upstreamIdx]
-			// Skip upstream nodes with when conditions
+			// Skip upstream nodes with when conditions unless they are entrypoint-connected
 			if upstreamNode.When != "" {
-				continue
+				// Entrypoint nodes always execute even without when check
+				isEntrypoint := false
+				for _, epNode := range nodes {
+					if epNode.ID == upstreamNode.ID && epNode.ID == nodes[0].ID {
+						isEntrypoint = true
+						break
+					}
+				}
+				if !isEntrypoint {
+					continue
+				}
 			}
 			upstreamOutputs := nodeOutputs[upstreamNode.ID]
 			if upstreamOutputs == nil {

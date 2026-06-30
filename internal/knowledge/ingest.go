@@ -201,69 +201,13 @@ func ingestCSV(ctx context.Context, source manifest.KnowledgeSourceSpec, resolve
 }
 
 func runQualityGates(source manifest.KnowledgeSourceSpec, units []Unit, result *IngestResult, gates []manifest.QualityGateSpec) {
-	// stale_content: check timestamp fields against maxAgeDays
-	for _, gate := range gates {
-		if gate.Type != "stale_content" || gate.MaxAgeDays <= 0 {
-			continue
-		}
-		cutoff := time.Now().AddDate(0, 0, -gate.MaxAgeDays)
-		for _, unit := range units {
-			ts := extractTimestamp(unit.Fields)
-			if ts.IsZero() {
-				result.Items = append(result.Items, QualityReportItem{
-					Code: "STALE_CONTENT", Severity: gate.Severity, Source: source.ID,
-					Message: fmt.Sprintf("record %q has no parseable timestamp, treated as stale", unit.SourceRef),
-				})
-				if gate.Severity == "block" {
-					result.Blocked++
-				} else {
-					result.Warnings++
-				}
-				continue
-			}
-			if ts.Before(cutoff) {
-				result.Items = append(result.Items, QualityReportItem{
-					Code: "STALE_CONTENT", Severity: gate.Severity, Source: source.ID,
-					Message: fmt.Sprintf("record %q is stale (last updated %s, max age %d days)", unit.SourceRef, ts.Format(time.RFC3339), gate.MaxAgeDays),
-				})
-				if gate.Severity == "block" {
-					result.Blocked++
-				} else {
-					result.Warnings++
-				}
-			}
-		}
-	}
-
-	// missing_required_fields: already checked during loadJSONLSource
-	// conflicting_answers: check for duplicate answers to the same question
-	seen := map[string]int{}
-	for i, unit := range units {
-		question := ""
-		if q, ok := unit.Fields["question"].(string); ok {
-			question = strings.TrimSpace(q)
-		}
-		if question == "" {
-			continue
-		}
-		if prevIdx, exists := seen[question]; exists {
-			prevAnswer := ""
-			if a, ok := units[prevIdx].Fields["answer"].(string); ok {
-				prevAnswer = strings.TrimSpace(a)
-			}
-			currAnswer := ""
-			if a, ok := unit.Fields["answer"].(string); ok {
-				currAnswer = strings.TrimSpace(a)
-			}
-			if prevAnswer != currAnswer && prevAnswer != "" && currAnswer != "" {
-				result.Items = append(result.Items, QualityReportItem{
-					Code: "CONFLICTING_ANSWERS", Severity: "warn", Source: source.ID,
-					Message: fmt.Sprintf("conflicting answer for question %q", question),
-				})
-				result.Warnings++
-			}
+	items := evaluateQualityGates(source.ID, source.Schema, units, gates)
+	result.Items = append(result.Items, items...)
+	for _, item := range items {
+		if item.Severity == "block" {
+			result.Blocked++
 		} else {
-			seen[question] = i
+			result.Warnings++
 		}
 	}
 }

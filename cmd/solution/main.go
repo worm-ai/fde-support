@@ -77,12 +77,13 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 
+	var evalEnvName string
 	evaluateCmd := &cobra.Command{
 		Use:   "evaluate manifest.yaml",
 		Short: "Evaluate a Solution against golden cases",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			report, err := app.EvaluateManifestFile(args[0])
+			report, err := app.EvaluateManifestFile(args[0], evalEnvName)
 			if err != nil {
 				return err
 			}
@@ -110,6 +111,7 @@ func newRootCommand() *cobra.Command {
 			return nil
 		},
 	}
+	evaluateCmd.Flags().StringVar(&evalEnvName, "env", "poc", "delivery environment name")
 
 	var envName string
 	var addr string

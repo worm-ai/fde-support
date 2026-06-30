@@ -59,7 +59,7 @@ components:
       requireCitation: true
   - id: answer_generator
     category: processor
-    ref: registry.agent.cited-answer@1.2.0
+    ref: registry.agent.cited-answer@1.0.0
     config:
       style: concise
       requireGrounding: true

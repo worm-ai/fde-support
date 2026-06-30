@@ -25,6 +25,29 @@ type Store struct {
 	units []Unit
 }
 
+// FilterBySources returns a new Store containing only units from the specified source IDs.
+// If sourceIDs is nil, the original store is returned unchanged (no filtering).
+// If sourceIDs is empty (non-nil), an empty store is returned (explicit no sources).
+func (s *Store) FilterBySources(sourceIDs []string) *Store {
+	if sourceIDs == nil {
+		return s
+	}
+	if len(sourceIDs) == 0 {
+		return &Store{units: nil}
+	}
+	set := make(map[string]bool, len(sourceIDs))
+	for _, id := range sourceIDs {
+		set[id] = true
+	}
+	var filtered []Unit
+	for _, unit := range s.units {
+		if set[unit.SourceID] {
+			filtered = append(filtered, unit)
+		}
+	}
+	return &Store{units: filtered}
+}
+
 type Unit struct {
 	SourceID  string
 	SourceRef string
@@ -94,6 +117,11 @@ func LoadWithOptions(ctx context.Context, m *manifest.SolutionManifest, env envi
 		if len(units) == 0 && !hasBlock(items) {
 			report.Items = append(report.Items, QualityReportItem{Code: "KNOWLEDGE_SOURCE_EMPTY", Severity: "warn", Source: source.ID, Message: "knowledge source is empty"})
 		}
+		// Run quality gates against loaded units
+		if len(m.Knowledge.QualityGates) > 0 {
+			gateItems := evaluateQualityGates(source.ID, source.Schema, units, m.Knowledge.QualityGates)
+			report.Items = append(report.Items, gateItems...)
+		}
 	}
 	for _, item := range report.Items {
 		if item.Severity == "block" {
@@ -125,6 +153,8 @@ func loadKnowledgeSource(source manifest.KnowledgeSourceSpec, resolved string) (
 }
 
 func (s *Store) Retrieve(ctx context.Context, query string, topK int) (registry.KnowledgeResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return registry.KnowledgeResult{}, err
 	}
@@ -221,6 +251,8 @@ func loadCSVSource(source manifest.KnowledgeSourceSpec, resolved string) ([]Unit
 	return units, hex.EncodeToString(hash.Sum(nil)), items
 }
 
+// loadJSONLSourceValidation runs ValidateSchemaFields on JSONL units.
+
 func loadJSONLSource(source manifest.KnowledgeSourceSpec, resolved string) ([]Unit, string, []QualityReportItem) {
 	file, err := os.Open(resolved)
 	if err != nil {
@@ -315,12 +347,17 @@ func writeReport(path string, report *QualityReport) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
 	bytes, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(tmp, bytes, 0o644); err != nil {
+	return atomicWriteFile(path, bytes)
+}
+
+// atomicWriteFile writes data to a temporary file and atomically renames it into place.
+func atomicWriteFile(path string, data []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
@@ -331,6 +368,8 @@ func fingerprintManifest(m *manifest.SolutionManifest) string {
 	clone.Path = ""
 	clone.BaseDir = ""
 	bytes, _ := json.Marshal(clone)
+	// Normalize numeric values: json.Marshal uses consistent formatting for YAML-decoded numbers.
+	// For production use, consider canonical CBOR or a stable serialization format.
 	sum := sha256.Sum256(bytes)
 	return hex.EncodeToString(sum[:])
 }
@@ -392,4 +431,112 @@ func (s *Store) Count() int {
 
 func (s *Store) String() string {
 	return fmt.Sprintf("knowledge.Store{%d units}", len(s.units))
+}
+
+
+// validateSchemaFields checks that units satisfy the required fields declared by schema(s).
+// It returns quality items for any missing required fields.
+func validateSchemaFields(units []Unit, schemas []manifest.KnowledgeSchemaSpec, sourceID string, sourceSchemaID string) []QualityReportItem {
+	if sourceSchemaID == "" || len(schemas) == 0 {
+		return nil
+	}
+	var items []QualityReportItem
+	var schema *manifest.KnowledgeSchemaSpec
+	for i := range schemas {
+		if schemas[i].ID == sourceSchemaID {
+			schema = &schemas[i]
+			break
+		}
+	}
+	if schema == nil {
+		return nil
+	}
+	for i, unit := range units {
+		for _, field := range schema.Fields {
+			if _, ok := unit.Fields[field]; !ok {
+				items = append(items, QualityReportItem{
+					Code:     "MISSING_REQUIRED_FIELD",
+					Severity: "block",
+					Source:   sourceID,
+					Line:     i + 1,
+					Message:  fmt.Sprintf("record is missing required field %q", field),
+				})
+			}
+		}
+	}
+	return items
+}
+
+// evaluateQualityGates runs quality gate checks against loaded units and returns items.
+func evaluateQualityGates(sourceID string, sourceSchema string, units []Unit, gates []manifest.QualityGateSpec) []QualityReportItem {
+	// Scope filtering is handled per-gate below
+	var items []QualityReportItem
+
+	for _, gate := range gates {
+		// Scope filtering: if gate has scope, only check units matching the scope schema
+		if len(gate.Scope) > 0 {
+			matched := false
+			for _, scopeSchema := range gate.Scope {
+				if scopeSchema == sourceSchema {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		if gate.Type != "stale_content" || gate.MaxAgeDays <= 0 {
+			continue
+		}
+		cutoff := time.Now().AddDate(0, 0, -gate.MaxAgeDays)
+		for _, unit := range units {
+			ts := extractTimestamp(unit.Fields)
+			if ts.IsZero() {
+				items = append(items, QualityReportItem{
+					Code: "STALE_CONTENT", Severity: gate.Severity, Source: sourceID,
+					Message: fmt.Sprintf("record %q has no parseable timestamp, treated as stale", unit.SourceRef),
+				})
+				continue
+			}
+			if ts.Before(cutoff) {
+				items = append(items, QualityReportItem{
+					Code: "STALE_CONTENT", Severity: gate.Severity, Source: sourceID,
+					Message: fmt.Sprintf("record %q is stale (last updated %s, max age %d days)", unit.SourceRef, ts.Format(time.RFC3339), gate.MaxAgeDays),
+				})
+			}
+		}
+	}
+
+	// conflicting_answers: check for duplicate answers to the same question
+	seen := map[string]int{}
+	for i, unit := range units {
+		question := ""
+		if q, ok := unit.Fields["question"].(string); ok {
+			question = strings.TrimSpace(q)
+		}
+		if question == "" {
+			continue
+		}
+		if prevIdx, exists := seen[question]; exists {
+			prevAnswer := ""
+			if a, ok := units[prevIdx].Fields["answer"].(string); ok {
+				prevAnswer = strings.TrimSpace(a)
+			}
+			currAnswer := ""
+			if a, ok := unit.Fields["answer"].(string); ok {
+				currAnswer = strings.TrimSpace(a)
+			}
+			if prevAnswer != currAnswer && prevAnswer != "" && currAnswer != "" {
+				items = append(items, QualityReportItem{
+					Code: "CONFLICTING_ANSWERS", Severity: "warn", Source: sourceID,
+					Message: fmt.Sprintf("conflicting answer for question %q", question),
+				})
+			}
+		} else {
+			seen[question] = i
+		}
+	}
+
+	return items
 }
