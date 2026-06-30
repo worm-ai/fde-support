@@ -50,6 +50,56 @@ func TestCheckEvalGatesFailsOnOnReleaseBlockFailure(t *testing.T) {
 	}
 }
 
+func TestRunFailsWhenOnReleaseEvalGateFails(t *testing.T) {
+	m := releaseQualityManifest()
+	m.Runtime.Observability = manifest.ObservabilitySpec{Trace: "required"}
+	m.Delivery.Security = manifest.SecuritySpec{
+		PIIDetection:           "required",
+		PromptInjectionDefense: "required",
+	}
+	m.Evaluation = manifest.EvaluationSpec{
+		Datasets: []manifest.EvaluationDatasetSpec{{ID: "golden", URI: "golden.jsonl"}},
+		Gates: []manifest.EvaluationGateSpec{{
+			Metric: "citation_coverage", Min: 0.95, Severity: "block", Schedule: "onRelease",
+		}},
+	}
+	env := releaseQualityEnv(t)
+	writeKnowledgeQualityReport(t, env, matchingKnowledgeQualityReport(m))
+	runner := &stubEvalRunner{report: &evaluation.EvalReport{
+		GateResults: []evaluation.GateResult{{
+			Metric: "citation_coverage", Min: 0.95, Actual: 0.5, Severity: "block", Schedule: "onRelease", Passed: false,
+		}},
+	}}
+	checker := NewCheckerWithEvaluator(m, env, runner)
+
+	report, err := checker.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if report.Passed {
+		t.Fatalf("expected release report to fail")
+	}
+	if !runner.called {
+		t.Fatalf("expected evaluation runner to be called")
+	}
+	foundEvalCheck := false
+	for _, check := range report.Checks {
+		if check.Name == "eval_gates_passed" {
+			foundEvalCheck = true
+			if check.Passed {
+				t.Fatalf("expected eval_gates_passed to fail")
+			}
+			continue
+		}
+		if !check.Passed {
+			t.Fatalf("unexpected failed check %s: %s", check.Name, check.Message)
+		}
+	}
+	if !foundEvalCheck {
+		t.Fatalf("eval_gates_passed check not found: %#v", report.Checks)
+	}
+}
+
 func TestCheckKnowledgeQualityFailsForStaleReport(t *testing.T) {
 	m := releaseQualityManifest()
 	env := releaseQualityEnv(t)

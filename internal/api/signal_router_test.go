@@ -102,6 +102,19 @@ func TestHandleSignalDuplicateWritesAuditTrace(t *testing.T) {
 	if writer.records[0].Trigger.Type != "w2a_signal" || writer.records[0].Trigger.Sensor != "ticket_webhook" {
 		t.Fatalf("duplicate trace trigger = %#v, want w2a_signal/ticket_webhook", writer.records[0].Trigger)
 	}
+	bytes, marshalErr := json.Marshal(writer.records[0])
+	if marshalErr != nil {
+		t.Fatalf("marshal duplicate trace: %v", marshalErr)
+	}
+	text := string(bytes)
+	if !strings.Contains(text, `"duplicate":true`) {
+		t.Fatalf("duplicate trace did not serialize duplicate=true: %s", text)
+	}
+	for _, leaked := range []string{"raw_payload", "source_event", "The pump shows E42"} {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("duplicate trace leaked raw W2A payload %q: %s", leaked, text)
+		}
+	}
 }
 
 func TestRejectedSignalTraceDoesNotStoreRawPayload(t *testing.T) {

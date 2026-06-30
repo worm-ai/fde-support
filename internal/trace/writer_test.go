@@ -86,6 +86,20 @@ func TestRedactValueMasksSensitiveKeysAndPII(t *testing.T) {
 	}
 }
 
+func TestRedactValueMasksInlineSensitivePhrases(t *testing.T) {
+	t.Parallel()
+
+	got, ok := RedactValue("my phone is 13800138000 and token is abc").(string)
+	if !ok {
+		t.Fatalf("RedactValue returned %T, want string", got)
+	}
+	for _, leaked := range []string{"13800138000", "abc"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("redacted string leaked %q: %s", leaked, got)
+		}
+	}
+}
+
 func TestFileTraceWriterRedactsRecordAndSpanData(t *testing.T) {
 	t.Parallel()
 

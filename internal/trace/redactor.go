@@ -7,6 +7,7 @@ import (
 
 var phoneLikePattern = regexp.MustCompile(`\b1[3-9]\d{9}\b`)
 var emailLikePattern = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+var inlineSensitivePattern = regexp.MustCompile(`(?i)\b((?:api[_ -]?key)|token|password|secret|authorization|cookie)\b(\s*(?:is|=|:)\s*)([^\s,;]+)`)
 
 func RedactValue(value any) any {
 	switch v := value.(type) {
@@ -32,6 +33,7 @@ func RedactValue(value any) any {
 	case string:
 		s := phoneLikePattern.ReplaceAllString(v, "[REDACTED_PHONE]")
 		s = emailLikePattern.ReplaceAllString(s, "[REDACTED_EMAIL]")
+		s = inlineSensitivePattern.ReplaceAllString(s, "${1}${2}[REDACTED]")
 		if strings.HasPrefix(s, "env:") {
 			return s
 		}
