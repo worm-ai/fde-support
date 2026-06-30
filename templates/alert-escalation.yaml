@@ -19,7 +19,7 @@ perception:
     - id: alert_route
       sensor: alert_webhook
       signalType: alert.triggered
-      routeTo: alert_agent
+      routeTo: evaluate_alert
 
 knowledge:
   sources:
@@ -66,7 +66,7 @@ components:
       queue: alert-l2
 
 workflow:
-  entrypoint: alert_agent
+  entrypoint: evaluate_alert
   onError:
     retry: 1
     fallbackNode: handoff

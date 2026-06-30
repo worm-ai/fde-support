@@ -19,7 +19,7 @@ perception:
     - id: ticket_route
       sensor: support_webhook
       signalType: ticket.created
-      routeTo: support_agent
+      routeTo: classify_intent
 
 knowledge:
   sources:
@@ -67,7 +67,7 @@ components:
       queue: support-l2
 
 workflow:
-  entrypoint: support_agent
+  entrypoint: classify_intent
   onError:
     retry: 1
     fallbackNode: handoff

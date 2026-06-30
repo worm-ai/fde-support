@@ -1,11 +1,25 @@
 package manifest
 
 import (
+	"path/filepath"
 	"testing"
 
 	"fde-support/internal/registry"
 	"fde-support/internal/w2a"
 )
+
+func TestM1ExamplesValidate(t *testing.T) {
+	paths := []string{
+		filepath.Join("..", "..", "examples", "after-sales-support", "manifest.yaml"),
+		filepath.Join("..", "..", "examples", "guoran-support", "manifest.yaml"),
+		filepath.Join("..", "..", "templates", "customer-support.yaml"),
+	}
+	validateManifestFiles(t, paths)
+}
+
+func TestM2TemplatesValidate(t *testing.T) {
+	t.Skip("enable after M2 component descriptors and source type validation are implemented")
+}
 
 func TestManifestValidator(t *testing.T) {
 	t.Parallel()
@@ -96,6 +110,24 @@ func TestManifestValidator(t *testing.T) {
 			}
 			if !hasCode(errs, tt.wantCode) {
 				t.Fatalf("Validate() missing code %q in %#v", tt.wantCode, errs)
+			}
+		})
+	}
+}
+
+func validateManifestFiles(t *testing.T, paths []string) {
+	t.Helper()
+
+	for _, path := range paths {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			m, err := LoadFile(path)
+			if err != nil {
+				t.Fatalf("load manifest: %v", err)
+			}
+			errs := NewValidator(registry.NewBuiltinComponentRegistry(), w2a.NewBuiltinSensorRegistry()).Validate(m)
+			if len(errs) > 0 {
+				t.Fatalf("expected manifest to validate, got %#v", errs)
 			}
 		})
 	}
