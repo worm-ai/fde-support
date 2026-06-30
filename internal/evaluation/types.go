@@ -7,11 +7,11 @@ import (
 
 // GoldenCase is a single evaluation case.
 type GoldenCase struct {
-	ID         string                    `json:"id"`
-	Trigger    runtimecore.TriggerSpec   `json:"trigger"`
-	Request    map[string]any            `json:"request"`
-	RawPayload map[string]any            `json:"raw_payload,omitempty"`
-	Expected   GoldenCaseExpected        `json:"expected"`
+	ID         string                  `json:"id"`
+	Trigger    runtimecore.TriggerSpec `json:"trigger"`
+	Request    map[string]any          `json:"request"`
+	RawPayload map[string]any          `json:"raw_payload,omitempty"`
+	Expected   GoldenCaseExpected      `json:"expected"`
 }
 
 // GoldenCaseExpected defines the expected outputs for a golden case.
@@ -23,26 +23,27 @@ type GoldenCaseExpected struct {
 
 // EvalResult holds the result of evaluating a single golden case.
 type EvalResult struct {
-	CaseID       string            `json:"caseId"`
-	Passed       bool              `json:"passed"`
-	Metrics      map[string]float64 `json:"metrics"`
-	TraceID      string            `json:"traceId,omitempty"`
-	ActualAnswer string            `json:"actualAnswer,omitempty"`
-	ActualIntent string            `json:"actualIntent,omitempty"`
-	Failures     []string          `json:"failures,omitempty"`
+	CaseID          string             `json:"caseId"`
+	Passed          bool               `json:"passed"`
+	Metrics         map[string]float64 `json:"metrics"`
+	TraceID         string             `json:"traceId,omitempty"`
+	ActualAnswer    string             `json:"actualAnswer,omitempty"`
+	ActualIntent    string             `json:"actualIntent,omitempty"`
+	ActualCitations []any              `json:"actualCitations,omitempty"`
+	Failures        []string           `json:"failures,omitempty"`
 }
 
 // EvalReport is the full evaluation report.
 type EvalReport struct {
-	Solution    string              `json:"solution"`
-	Version     string              `json:"version"`
-	DatasetURI  string              `json:"datasetUri"`
-	TotalCases  int                 `json:"totalCases"`
-	PassedCases int                 `json:"passedCases"`
-	Metrics     map[string]float64  `json:"metrics"`
-	GateResults []GateResult        `json:"gateResults"`
-	Results     []EvalResult        `json:"results"`
-	Warnings    []string            `json:"warnings,omitempty"`
+	Solution    string             `json:"solution"`
+	Version     string             `json:"version"`
+	DatasetURI  string             `json:"datasetUri"`
+	TotalCases  int                `json:"totalCases"`
+	PassedCases int                `json:"passedCases"`
+	Metrics     map[string]float64 `json:"metrics"`
+	GateResults []GateResult       `json:"gateResults"`
+	Results     []EvalResult       `json:"results"`
+	Warnings    []string           `json:"warnings,omitempty"`
 }
 
 // GateResult represents the outcome of a single evaluation gate.

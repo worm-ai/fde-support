@@ -119,6 +119,9 @@ func (r *Runner) runCase(ctx context.Context, gc GoldenCase) EvalResult {
 
 	result.ActualAnswer, _ = response["answer"].(string)
 	result.ActualIntent, _ = response["intent"].(string)
+	if citations, ok := response["citations"].([]any); ok {
+		result.ActualCitations = citations
+	}
 
 	// Check intent match
 	if gc.Expected.Intent != "" && result.ActualIntent != gc.Expected.Intent {

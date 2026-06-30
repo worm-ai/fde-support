@@ -7,18 +7,15 @@ import (
 // evalCitationCoverage checks if citations are present when expected.mustCite is true.
 func evalCitationCoverage(gc GoldenCase, result EvalResult) (float64, bool) {
 	if !gc.Expected.MustCite {
-		return 0, true // not applicable, skip
+		return 1, true
 	}
 	if result.ActualAnswer == "" {
 		return 0, false
 	}
-	// Check if the response has citations - we check the trace spans for the retriever output
-	// For MVP, we check if the answer is not the default "empty knowledge" message
-	hasCitations := !strings.Contains(result.ActualAnswer, "当前知识库为空或未检索到相关知识")
-	if hasCitations {
-		return 1.0, true
+	if len(result.ActualCitations) == 0 {
+		return 0, false
 	}
-	return 0, false
+	return 1, true
 }
 
 // evalAnswerAccuracy checks if all expected.answerContains words appear in the answer.
