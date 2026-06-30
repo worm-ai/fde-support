@@ -14,17 +14,17 @@ import (
 )
 
 type Executor struct {
-	manifest    *manifest.SolutionManifest
-	plan        *workflow.Plan
-	env         environment.ResolvedEnvironment
-	registry    registry.ComponentRegistry
-	knowledge   registry.KnowledgeReader
-	traceWriter *trace.FileTraceWriter
+	manifest     *manifest.SolutionManifest
+	plan         *workflow.Plan
+	env          environment.ResolvedEnvironment
+	registry     registry.ComponentRegistry
+	knowledge    registry.KnowledgeReader
+	traceWriter  *trace.FileTraceWriter
 	modelGateway registry.ModelGateway
 	httpGateway  registry.HTTPCaller
-	components  map[string]registry.Component
-	descriptors map[string]registry.ComponentDescriptor
-	specs       map[string]manifest.ComponentSpec
+	components   map[string]registry.Component
+	descriptors  map[string]registry.ComponentDescriptor
+	specs        map[string]manifest.ComponentSpec
 }
 
 func NewExecutor(m *manifest.SolutionManifest, env environment.ResolvedEnvironment, reg registry.ComponentRegistry, knowledge registry.KnowledgeReader, traceWriter *trace.FileTraceWriter, modelGateway registry.ModelGateway, httpGateway registry.HTTPCaller) (*Executor, error) {
@@ -43,16 +43,17 @@ func NewExecutor(m *manifest.SolutionManifest, env environment.ResolvedEnvironme
 		return nil, fmt.Errorf("workflow compilation failed: %v", issues)
 	}
 	ex := &Executor{
-		manifest:    m,
-		plan:        plan,
-		env:         env,
-		registry:    reg,
-		knowledge:   knowledge,
-		traceWriter: traceWriter,
-		components:  map[string]registry.Component{},
-		descriptors: map[string]registry.ComponentDescriptor{},
-		specs:       map[string]manifest.ComponentSpec{},
+		manifest:     m,
+		plan:         plan,
+		env:          env,
+		registry:     reg,
+		knowledge:    knowledge,
+		traceWriter:  traceWriter,
+		components:   map[string]registry.Component{},
+		descriptors:  map[string]registry.ComponentDescriptor{},
+		specs:        map[string]manifest.ComponentSpec{},
 		modelGateway: modelGateway,
+		httpGateway:  httpGateway,
 	}
 	for _, spec := range m.Components {
 		component, err := reg.Instantiate(spec.ID, spec.Ref, spec.Config)

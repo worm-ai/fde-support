@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -43,7 +45,34 @@ type RuntimeApp struct {
 type defaultHTTPCaller struct{}
 
 func (d *defaultHTTPCaller) Call(ctx context.Context, req registry.HTTPCallRequest) (registry.HTTPCallResponse, error) {
-	return registry.HTTPCallResponse{}, fmt.Errorf("http.call capability not fully configured")
+	method := req.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, method, req.URL, strings.NewReader(req.Body))
+	if err != nil {
+		return registry.HTTPCallResponse{}, err
+	}
+	for k, v := range req.Headers {
+		httpReq.Header.Set(k, v)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return registry.HTTPCallResponse{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return registry.HTTPCallResponse{}, err
+	}
+	headers := map[string]string{}
+	for key, values := range resp.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+	return registry.HTTPCallResponse{StatusCode: resp.StatusCode, Body: string(body), Headers: headers}, nil
 }
 
 func SignalContext() context.Context {

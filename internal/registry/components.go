@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -249,7 +247,6 @@ func synthesizeAnswer(message string, passages []any, actions []ActionSummary) s
 	return first
 }
 
-
 // --- M2 Phase 2 builtin components ---
 
 // llmExtractor extracts structured data from text using the model gateway.
@@ -415,16 +412,15 @@ func (c *ruleEvaluator) Run(ctx context.Context, input map[string]any, runtime R
 	return map[string]any{"matched": true, "rule": best["rule"], "result": best["result"], "matches": matched, "status": "ok"}, nil
 }
 
-
 // httpCaller calls external HTTP APIs.
 type httpCaller struct {
 	baseComponent
-	urlTemplate      string
-	method           string
-	headers          map[string]string
-	bodyTemplate     string
-	timeoutMs        int
-	continueOnFail   bool
+	urlTemplate    string
+	method         string
+	headers        map[string]string
+	bodyTemplate   string
+	timeoutMs      int
+	continueOnFail bool
 }
 
 func newHTTPCaller(id string, cfg map[string]any) Component {
@@ -475,26 +471,23 @@ func (c *httpCaller) Run(ctx context.Context, input map[string]any, runtime Runt
 		body = strings.ReplaceAll(body, "{{"+k+"}}", fmt.Sprint(v))
 	}
 
-	req, err := http.NewRequestWithContext(ctx, c.method, url, strings.NewReader(body))
-	if err != nil {
-		return map[string]any{"status": "failed", "error": map[string]any{"code": "HTTP_REQUEST_BUILD_FAILED", "message": err.Error()}}, nil
+	caller := runtime.HTTP()
+	if caller == nil {
+		return nil, fmt.Errorf("http.call capability is not available")
 	}
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range c.headers {
-		req.Header.Set(k, v)
-	}
-
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
+	resp, err := caller.Call(ctx, HTTPCallRequest{
+		URL:     url,
+		Method:  c.method,
+		Headers: c.headers,
+		Body:    body,
+	})
 	if err != nil {
 		return map[string]any{"status": "failed", "error": map[string]any{"code": "HTTP_REQUEST_FAILED", "message": err.Error()}}, nil
 	}
-	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	var parsed any
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		parsed = string(respBody)
+	if err := json.Unmarshal([]byte(resp.Body), &parsed); err != nil {
+		parsed = resp.Body
 	}
 	return map[string]any{"status": "ok", "statusCode": float64(resp.StatusCode), "body": parsed}, nil
 }
