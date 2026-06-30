@@ -3,7 +3,6 @@ package knowledge
 import (
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -16,26 +15,26 @@ import (
 
 // IngestResult holds the outcome of a knowledge ingestion run.
 type IngestResult struct {
-	SourceID  string             `json:"sourceId"`
-	Type      string             `json:"type"`
-	URI       string             `json:"uri"`
-	Records   int                `json:"records"`
-	Ingested  int                `json:"ingested"`
-	Blocked   int                `json:"blocked"`
-	Warnings  int                `json:"warnings"`
-	Status    string             `json:"status"`
+	SourceID  string              `json:"sourceId"`
+	Type      string              `json:"type"`
+	URI       string              `json:"uri"`
+	Records   int                 `json:"records"`
+	Ingested  int                 `json:"ingested"`
+	Blocked   int                 `json:"blocked"`
+	Warnings  int                 `json:"warnings"`
+	Status    string              `json:"status"`
 	Items     []QualityReportItem `json:"items,omitempty"`
-	StartedAt time.Time          `json:"startedAt"`
-	EndedAt   time.Time          `json:"endedAt"`
+	StartedAt time.Time           `json:"startedAt"`
+	EndedAt   time.Time           `json:"endedAt"`
 }
 
 // IngestReport is the overall ingestion report.
 type IngestReport struct {
-	GeneratedAt time.Time      `json:"generatedAt"`
-	Results     []IngestResult `json:"results"`
-	Status      string         `json:"status"`
-	TotalRecords int           `json:"totalRecords"`
-	TotalIngested int          `json:"totalIngested"`
+	GeneratedAt   time.Time      `json:"generatedAt"`
+	Results       []IngestResult `json:"results"`
+	Status        string         `json:"status"`
+	TotalRecords  int            `json:"totalRecords"`
+	TotalIngested int            `json:"totalIngested"`
 }
 
 // Ingest executes the knowledge ingestion pipeline: reads source files,
@@ -59,13 +58,34 @@ func Ingest(ctx context.Context, m *manifest.SolutionManifest, env environment.R
 		}
 	}
 
-	bytes, _ := json.MarshalIndent(report, "", "  ")
-	_ = os.WriteFile(env.ReportPath(), bytes, 0o644)
+	if err := writeReport(env.ReportPath(), qualityReportFromIngest(m, report)); err != nil {
+		return report, err
+	}
 
 	if report.Status == "blocked" {
 		return report, shared.NewError("KNOWLEDGE_INGEST_BLOCKED", env.ReportPath(), "knowledge ingestion has block findings")
 	}
 	return report, nil
+}
+
+func qualityReportFromIngest(m *manifest.SolutionManifest, report *IngestReport) *QualityReport {
+	quality := &QualityReport{
+		GeneratedAt:                report.GeneratedAt,
+		ManifestFingerprint:        FingerprintManifest(m),
+		KnowledgeConfigFingerprint: FingerprintKnowledgeConfig(m),
+		Status:                     report.Status,
+	}
+	for _, result := range report.Results {
+		quality.Sources = append(quality.Sources, SourceReport{
+			ID:          result.SourceID,
+			URI:         result.URI,
+			ResolvedURI: resolveManifestPath(m.BaseDir, result.URI),
+			Records:     result.Records,
+		})
+		quality.Items = append(quality.Items, result.Items...)
+	}
+	quality.KnowledgeSourcesFingerprint = FingerprintSourceReports(quality.Sources)
+	return quality
 }
 
 func ingestSource(ctx context.Context, m *manifest.SolutionManifest, source manifest.KnowledgeSourceSpec, gates []manifest.QualityGateSpec) IngestResult {
@@ -256,7 +276,6 @@ func allEmpty(values []string) bool {
 	}
 	return true
 }
-
 
 // extractTimestamp tries to parse a timestamp from common fields and formats.
 func extractTimestamp(fields map[string]any) time.Time {

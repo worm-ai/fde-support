@@ -31,11 +31,13 @@ type Unit struct {
 }
 
 type QualityReport struct {
-	GeneratedAt         time.Time           `json:"generatedAt"`
-	ManifestFingerprint string              `json:"manifestFingerprint"`
-	Sources             []SourceReport      `json:"sources"`
-	Status              string              `json:"status"`
-	Items               []QualityReportItem `json:"items"`
+	GeneratedAt                 time.Time           `json:"generatedAt"`
+	ManifestFingerprint         string              `json:"manifestFingerprint"`
+	KnowledgeConfigFingerprint  string              `json:"knowledgeConfigFingerprint"`
+	KnowledgeSourcesFingerprint string              `json:"knowledgeSourcesFingerprint"`
+	Sources                     []SourceReport      `json:"sources"`
+	Status                      string              `json:"status"`
+	Items                       []QualityReportItem `json:"items"`
 }
 
 type SourceReport struct {
@@ -56,9 +58,10 @@ type QualityReportItem struct {
 
 func Load(ctx context.Context, m *manifest.SolutionManifest, env environment.ResolvedEnvironment) (*Store, *QualityReport, error) {
 	report := &QualityReport{
-		GeneratedAt:         time.Now().UTC(),
-		ManifestFingerprint: fingerprintManifest(m),
-		Status:              "passed",
+		GeneratedAt:                time.Now().UTC(),
+		ManifestFingerprint:        fingerprintManifest(m),
+		KnowledgeConfigFingerprint: fingerprintKnowledgeConfig(m),
+		Status:                     "passed",
 	}
 	store := &Store{}
 	for _, source := range m.Knowledge.Sources {
@@ -88,6 +91,7 @@ func Load(ctx context.Context, m *manifest.SolutionManifest, env environment.Res
 			break
 		}
 	}
+	report.KnowledgeSourcesFingerprint = fingerprintSourceReports(report.Sources)
 	if err := writeReport(env.ReportPath(), report); err != nil {
 		return nil, report, err
 	}
@@ -250,6 +254,41 @@ func fingerprintManifest(m *manifest.SolutionManifest) string {
 	clone.Path = ""
 	clone.BaseDir = ""
 	bytes, _ := json.Marshal(clone)
+	sum := sha256.Sum256(bytes)
+	return hex.EncodeToString(sum[:])
+}
+
+func FingerprintManifest(m *manifest.SolutionManifest) string {
+	return fingerprintManifest(m)
+}
+
+func FingerprintKnowledgeConfig(m *manifest.SolutionManifest) string {
+	return fingerprintKnowledgeConfig(m)
+}
+
+func FingerprintSourceReports(sources []SourceReport) string {
+	return fingerprintSourceReports(sources)
+}
+
+func fingerprintKnowledgeConfig(m *manifest.SolutionManifest) string {
+	payload := struct {
+		Sources  []manifest.KnowledgeSourceSpec
+		Schemas  []manifest.KnowledgeSchemaSpec
+		Gates    []manifest.QualityGateSpec
+		Bindings []manifest.KnowledgeBindingSpec
+	}{
+		Sources:  m.Knowledge.Sources,
+		Schemas:  m.Knowledge.Schemas,
+		Gates:    m.Knowledge.QualityGates,
+		Bindings: m.Runtime.KnowledgeBindings,
+	}
+	bytes, _ := json.Marshal(payload)
+	sum := sha256.Sum256(bytes)
+	return hex.EncodeToString(sum[:])
+}
+
+func fingerprintSourceReports(sources []SourceReport) string {
+	bytes, _ := json.Marshal(sources)
 	sum := sha256.Sum256(bytes)
 	return hex.EncodeToString(sum[:])
 }

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"fde-support/internal/environment"
 	"fde-support/internal/evaluation"
+	"fde-support/internal/knowledge"
 	"fde-support/internal/manifest"
 	"fde-support/internal/shared"
 )
@@ -151,11 +153,36 @@ func (c *Checker) checkKnowledgeQuality(ctx context.Context) CheckResult {
 			Message: fmt.Sprintf("knowledge quality report not found: %v", err)}
 	}
 	var report struct {
-		Status string `json:"status"`
+		GeneratedAt                 time.Time                `json:"generatedAt"`
+		ManifestFingerprint         string                   `json:"manifestFingerprint"`
+		KnowledgeConfigFingerprint  string                   `json:"knowledgeConfigFingerprint"`
+		KnowledgeSourcesFingerprint string                   `json:"knowledgeSourcesFingerprint"`
+		Sources                     []knowledge.SourceReport `json:"sources"`
+		Status                      string                   `json:"status"`
+		Items                       []struct {
+			Severity string `json:"severity"`
+		} `json:"items"`
 	}
 	if err := json.Unmarshal(data, &report); err != nil {
 		return CheckResult{Name: "knowledge_quality_passed", Passed: false, Severity: "block",
 			Message: fmt.Sprintf("invalid quality report: %v", err)}
+	}
+	if report.GeneratedAt.IsZero() || time.Since(report.GeneratedAt) > 24*time.Hour {
+		return CheckResult{Name: "knowledge_quality_passed", Passed: false, Severity: "block", Message: "knowledge quality report is older than 24 hours"}
+	}
+	if report.ManifestFingerprint != knowledge.FingerprintManifest(c.manifest) {
+		return CheckResult{Name: "knowledge_quality_passed", Passed: false, Severity: "block", Message: "knowledge quality report manifest fingerprint mismatch"}
+	}
+	if report.KnowledgeConfigFingerprint != knowledge.FingerprintKnowledgeConfig(c.manifest) {
+		return CheckResult{Name: "knowledge_quality_passed", Passed: false, Severity: "block", Message: "knowledge quality report config fingerprint mismatch"}
+	}
+	if report.KnowledgeSourcesFingerprint == "" || report.KnowledgeSourcesFingerprint != knowledge.FingerprintSourceReports(report.Sources) {
+		return CheckResult{Name: "knowledge_quality_passed", Passed: false, Severity: "block", Message: "knowledge quality report sources fingerprint mismatch"}
+	}
+	for _, item := range report.Items {
+		if item.Severity == "block" {
+			return CheckResult{Name: "knowledge_quality_passed", Passed: false, Severity: "block", Message: "knowledge quality report has block findings"}
+		}
 	}
 	if report.Status == "blocked" {
 		return CheckResult{Name: "knowledge_quality_passed", Passed: false, Severity: "block",
