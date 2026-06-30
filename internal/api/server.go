@@ -26,22 +26,25 @@ type Server struct {
 
 func NewServer(m *manifest.SolutionManifest, env environment.ResolvedEnvironment, executor *runtimecore.Executor, store w2a.SignalIdempotencyStore, traceWriter *trace.FileTraceWriter) *Server {
 	router := chi.NewRouter()
-	signalRouter := NewSignalRouter(m, env, executor, store, traceWriter)
+	signalRouter := NewSignalRouter(m, env, executor, store, traceWriter, newAuditLogWriter())
 	webRoot := resolveWebRoot()
+	hasWeb := webRoot != ""
 
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
-	router.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filepath.Join(webRoot, "index.html"))
-	})
-	router.Get("/web", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/web/", http.StatusMovedPermanently)
-	})
-	router.Get("/web/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filepath.Join(webRoot, "index.html"))
-	})
-	router.Handle("/web/*", http.StripPrefix("/web/", http.FileServer(http.Dir(webRoot))))
+	if hasWeb {
+		router.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, filepath.Join(webRoot, "index.html"))
+		})
+		router.Get("/web", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/web/", http.StatusMovedPermanently)
+		})
+		router.Get("/web/", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, filepath.Join(webRoot, "index.html"))
+		})
+		router.Handle("/web/*", http.StripPrefix("/web/", cspMiddleware(http.FileServer(http.Dir(webRoot)))))
+	}
 	router.Get("/api/runtime", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, newRuntimeView(m, env))
 	})
@@ -196,7 +199,7 @@ func resolveWebRoot() string {
 			return root
 		}
 	}
-	return "web"
+	return ""
 }
 
 func findWebRoot(start string) string {
@@ -212,4 +215,18 @@ func findWebRoot(start string) string {
 		}
 		dir = parent
 	}
+}
+
+
+// cspMiddleware adds Content-Security-Policy header to prevent XSS.
+func cspMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// newAuditLogWriter creates a writer for security audit events.
+func newAuditLogWriter() io.Writer {
+	return os.Stderr
 }

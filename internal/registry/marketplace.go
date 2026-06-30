@@ -7,8 +7,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
+
 )
 
 // PublishComponent packages a component directory into a .tar.gz archive.
@@ -94,14 +96,52 @@ type ReuseStats struct {
 
 // ComputeReuseStats calculates reuse metrics for a solution manifest.
 func ComputeReuseStats(m interface{}) ReuseStats {
-	// Placeholder for reuse statistics computation
-	return ReuseStats{
-		TotalComponents:  0,
-		ReusedComponents: 0,
-		ReuseRatio:       0,
-		CustomComponents: 0,
-		TemplateUsed:     false,
+	// Use interface{} to avoid circular import with manifest package.
+	// Extract components via reflection-like approach using common fields.
+	type componentLike struct {
+		Ref string
 	}
+	type manifestLike struct {
+		Components   []componentLike
+		SolutionType string
+	}
+
+	// Attempt to unmarshal from map or concrete type
+	var ml manifestLike
+	if stringMap, ok := m.(map[string]any); ok {
+		if comps, ok := stringMap["components"].([]any); ok {
+			for _, c := range comps {
+				if cm, ok := c.(map[string]any); ok {
+					ref, _ := cm["ref"].(string)
+					ml.Components = append(ml.Components, componentLike{Ref: ref})
+				}
+			}
+		}
+		ml.SolutionType, _ = stringMap["solutionType"].(string)
+	} else {
+		// If not a map, return empty stats
+		return ReuseStats{}
+	}
+
+	stats := ReuseStats{
+		TotalComponents: len(ml.Components),
+	}
+
+	for _, comp := range ml.Components {
+		if strings.HasPrefix(comp.Ref, "registry.") {
+			stats.ReusedComponents++
+		} else {
+			stats.CustomComponents++
+		}
+	}
+
+	if stats.TotalComponents > 0 {
+		stats.ReuseRatio = float64(stats.ReusedComponents) / float64(stats.TotalComponents)
+	}
+
+	stats.TemplateUsed = ml.SolutionType != "" && strings.Contains(strings.ToLower(ml.SolutionType), "support")
+
+	return stats
 }
 
 func sanitizeRef(ref string) string {

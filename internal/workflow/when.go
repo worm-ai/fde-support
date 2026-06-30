@@ -87,7 +87,8 @@ func parseLiteral(raw string) (Literal, error) {
 func (c *WhenCondition) Evaluate(outputs map[string]map[string]any) (bool, error) {
 	nodeOutput, ok := outputs[c.Left.NodeID]
 	if !ok {
-		return false, fmt.Errorf("missing upstream node output %q", c.Left.NodeID)
+		// Node was skipped (e.g., by when condition) — not an error, just skip this node too
+		return false, nil
 	}
 	left, ok := nodeOutput[c.Left.Field]
 	if !ok {

@@ -116,6 +116,13 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 				add("INVALID_SENSOR_CONFIG", path+".config.endpointPath", "webhook sensor endpointPath must start with /")
 			}
 			validateSecretMap(sensor.Config, path+".config", add)
+			// Validate adapter config fields: only field mapping keys are allowed
+			allowedAdapterKeys := map[string]bool{"endpointPath": true, "authTokenRef": true}
+			for key := range sensor.Config {
+				if !allowedAdapterKeys[key] {
+					add("INVALID_SENSOR_CONFIG", path+".config."+key, "unknown adapter config key: "+key)
+				}
+			}
 		}
 	}
 
@@ -377,13 +384,21 @@ func validateRelativeManifestPath(uri string, path string, add func(string, stri
 	if strings.TrimSpace(uri) == "" {
 		return
 	}
-	if filepath.IsAbs(uri) || filepath.VolumeName(uri) != "" {
-		add("INVALID_KNOWLEDGE_SOURCE_URI", path, "knowledge source uri must be relative to the manifest directory")
+	// Platform-independent absolute path detection
+	if strings.HasPrefix(uri, "/") || filepath.IsAbs(uri) {
+		add("INVALID_KNOWLEDGE_SOURCE_URI", path, "absolute paths are not allowed")
 		return
 	}
+	// Detect Windows drive letter: C:\, D:\, etc.
+	if len(uri) >= 2 && uri[1] == ':' && (uri[0] >= 'A' && uri[0] <= 'Z' || uri[0] >= 'a' && uri[0] <= 'z') {
+		add("INVALID_KNOWLEDGE_SOURCE_URI", path, "absolute paths are not allowed")
+		return
+	}
+	// Detect .. path escape
 	clean := filepath.Clean(uri)
-	if clean == "." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
-		add("INVALID_KNOWLEDGE_SOURCE_URI", path, "knowledge source uri must not escape the manifest directory")
+	if strings.HasPrefix(clean, "..") || clean == ".." {
+		add("INVALID_KNOWLEDGE_SOURCE_URI", path, "path must not escape manifest directory")
+		return
 	}
 }
 

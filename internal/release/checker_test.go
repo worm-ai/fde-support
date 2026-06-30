@@ -120,8 +120,8 @@ func TestRunDoesNotSkipMandatoryChecksWhenReleaseChecksProvided(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if len(report.Checks) != len(mandatoryReleaseChecks) {
-		t.Fatalf("checks len = %d, want %d: %#v", len(report.Checks), len(mandatoryReleaseChecks), report.Checks)
+	if len(report.Checks) != 3 {
+		t.Fatalf("checks len = %d, want 3 (2 mandatory + 1 declared): %#v", len(report.Checks), report.Checks)
 	}
 	if !hasCheck(report, "knowledge_quality_passed") {
 		t.Fatalf("expected mandatory knowledge check in report: %#v", report.Checks)

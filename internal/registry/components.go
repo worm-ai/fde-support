@@ -280,7 +280,7 @@ func (c *llmExtractor) Run(ctx context.Context, input map[string]any, runtime Ru
 	}
 	model := runtime.Model()
 	if model == nil {
-		return map[string]any{"status": "failed", "error": map[string]any{"code": "MODEL_UNAVAILABLE", "message": "model gateway not available"}}, nil
+		return nil, fmt.Errorf("model gateway not available")
 	}
 	resp, err := model.Generate(ctx, ModelGenerateRequest{
 		Messages: []ModelMessage{{Role: "user", Content: text}},
@@ -288,7 +288,7 @@ func (c *llmExtractor) Run(ctx context.Context, input map[string]any, runtime Ru
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"extracted": resp.Content, "status": "ok"}, nil
+	return map[string]any{"extracted": resp.Content}, nil
 }
 
 // dataQuery queries tabular data sources using SQL-like syntax.
@@ -324,7 +324,7 @@ func (c *dataQuery) Run(ctx context.Context, input map[string]any, runtime Runti
 	for _, citation := range result.Citations {
 		citations = append(citations, map[string]any{"source": citation.Source, "ref": citation.Ref})
 	}
-	return map[string]any{"rows": result.Raw, "count": len(result.Raw), "citations": citations, "status": "ok"}, nil
+	return map[string]any{"rows": result.Raw, "count": len(result.Raw), "citations": citations}, nil
 }
 
 // ruleEvaluator evaluates a list of rules against the input.
@@ -409,7 +409,7 @@ func (c *ruleEvaluator) Run(ctx context.Context, input map[string]any, runtime R
 		}
 	}
 	if len(matched) == 0 {
-		return map[string]any{"matched": false, "status": "ok"}, nil
+		return map[string]any{"matched": false}, nil
 	}
 	best := matched[0]
 	for _, m := range matched[1:] {
@@ -417,7 +417,7 @@ func (c *ruleEvaluator) Run(ctx context.Context, input map[string]any, runtime R
 			best = m
 		}
 	}
-	return map[string]any{"matched": true, "rule": best["rule"], "result": best["result"], "matches": matched, "status": "ok"}, nil
+	return map[string]any{"matched": true, "rule": best["rule"], "result": best["result"], "matches": matched}, nil
 }
 
 // httpCaller calls external HTTP APIs.

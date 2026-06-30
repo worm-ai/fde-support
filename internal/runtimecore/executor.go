@@ -3,6 +3,7 @@ package runtimecore
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"fde-support/internal/environment"
@@ -19,6 +20,7 @@ type Executor struct {
 	env          environment.ResolvedEnvironment
 	registry     registry.ComponentRegistry
 	knowledge    registry.KnowledgeReader
+	knowledgeStore registry.KnowledgeStoreFilter
 	traceWriter  *trace.FileTraceWriter
 	modelGateway registry.ModelGateway
 	httpGateway  registry.HTTPCaller
@@ -54,6 +56,9 @@ func NewExecutor(m *manifest.SolutionManifest, env environment.ResolvedEnvironme
 		specs:        map[string]manifest.ComponentSpec{},
 		modelGateway: modelGateway,
 		httpGateway:  httpGateway,
+	}
+	if ks, ok := knowledge.(registry.KnowledgeStoreFilter); ok {
+		ex.knowledgeStore = ks
 	}
 	for _, spec := range m.Components {
 		component, err := reg.Instantiate(spec.ID, spec.Ref, spec.Config)
@@ -91,7 +96,10 @@ func (e *Executor) Execute(ctx context.Context, req RuntimeRequest) (map[string]
 	if mapErr != nil {
 		errSummary := toRuntimeError("input_mapping_error", "", mapErr, 0)
 		finished, finishErr := e.traceWriter.Finish(ctx, record.TraceID, "failed", errSummary, time.Since(start))
-		return nil, finished, coalesceErr(mapErr, finishErr)
+		if finishErr != nil {
+			fmt.Fprintf(os.Stderr, "[%s] WARNING: trace finish failed: %v\n", record.TraceID, finishErr)
+		}
+		return nil, finished, mapErr
 	}
 
 	retryCount := e.manifest.Workflow.OnError.Retry
@@ -110,13 +118,22 @@ func (e *Executor) Execute(ctx context.Context, req RuntimeRequest) (map[string]
 	}
 	if runErr := exec.run(); runErr != nil {
 		errSummary := toRuntimeError(runErr.errType, runErr.failedNode, runErr.err, runErr.attempts)
+		response := e.mapResponse(record.TraceID, exec.outputs, exec.actions, exec.firstIntent, exec.lastAnswerNode, exec.lastRetrieverNode)
 		finished, finishErr := e.traceWriter.Finish(ctx, record.TraceID, "failed", errSummary, time.Since(start))
-		return nil, finished, coalesceErr(runErr.err, finishErr)
+		if finishErr != nil {
+			fmt.Fprintf(os.Stderr, "[%s] WARNING: trace finish failed: %v\n", record.TraceID, finishErr)
+			response["_traceWarning"] = "trace persistence failed"
+		}
+		return response, finished, runErr.err
 	}
 	response := e.mapResponse(record.TraceID, exec.outputs, exec.actions, exec.firstIntent, exec.lastAnswerNode, exec.lastRetrieverNode)
+	if _, hasWarnings := response["_traceWarning"]; !hasWarnings {
+		// Ensure map is not nil before adding warning
+	}
 	finished, finishErr := e.traceWriter.Finish(ctx, record.TraceID, "success", nil, time.Since(start))
 	if finishErr != nil {
-		return nil, finished, finishErr
+		fmt.Fprintf(os.Stderr, "[%s] WARNING: trace finish failed: %v\n", record.TraceID, finishErr)
+		response["_traceWarning"] = "trace persistence failed"
 	}
 	return response, finished, nil
 }
@@ -139,6 +156,20 @@ func (e *Executor) ApplyInputMapping(req RuntimeRequest) (map[string]any, error)
 	return out, nil
 }
 
+// scopedKnowledge returns a KnowledgeReader filtered to the sources bound to the component,
+// or the full knowledge store if no binding is declared for this component.
+func (e *Executor) scopedKnowledge(componentID string) registry.KnowledgeReader {
+	if e.knowledgeStore == nil {
+		return e.knowledge
+	}
+	for _, binding := range e.manifest.Runtime.KnowledgeBindings {
+		if binding.Component == componentID {
+			return e.knowledgeStore.FilterBySources(binding.Sources)
+		}
+	}
+	return e.knowledge
+}
+
 func (e *Executor) executeNodeWithRetry(ctx context.Context, traceID string, node workflow.CompiledNode, component registry.Component, inputs map[string]any, outputs map[string]map[string]any, req RuntimeRequest, actions []registry.ActionSummary, errSummary *registry.RuntimeErrorSummary, retries int) (map[string]any, int, error) {
 	var lastErr error
 	for attempt := 1; attempt <= retries+1; attempt++ {
@@ -155,12 +186,19 @@ func (e *Executor) executeNodeWithRetry(ctx context.Context, traceID string, nod
 			continue
 		}
 		nodeCtx, cancel := context.WithTimeout(ctx, time.Duration(e.env.MaxLatencyMs)*time.Millisecond)
-		output, err := component.Run(nodeCtx, nodeInput, runtimeContext{environment: e.env.EnvironmentName, knowledge: e.knowledge, modelGateway: e.modelGateway, httpGateway: e.httpGateway, request: req, errSummary: errSummary, actions: actions, logger: runtimeLogger{traceID: traceID}})
+		output, err := component.Run(nodeCtx, nodeInput, runtimeContext{environment: e.env.EnvironmentName, knowledge: e.scopedKnowledge(node.Component), modelGateway: e.modelGateway, httpGateway: e.httpGateway, request: req, errSummary: errSummary, actions: actions, logger: runtimeLogger{traceID: traceID}})
 		cancel()
 		if err != nil {
 			lastErr = err
 			_ = e.traceWriter.AppendSpan(ctx, traceID, trace.TraceSpan{Node: node.ID, Component: node.Component, Attempt: attempt, Input: nodeInput, LatencyMS: time.Since(nodeStart).Milliseconds(), Error: toRuntimeError("component_error", node.ID, err, attempt)})
 			continue
+		}
+		// Post-condition: processor components must not emit "status" in output.
+		// Log a debug warning if they do — this is not a hard failure but indicates a contract violation.
+		if spec, ok := e.specs[node.Component]; ok && string(spec.Category) == "processor" {
+			if _, hasStatus := output["status"]; hasStatus {
+				fmt.Fprintf(os.Stderr, "[%s] DEBUG: processor component %s emitted status field in output — this violates the processor contract\n", traceID, node.Component)
+			}
 		}
 		if status, _ := output["status"].(string); status == "error" || status == "failed" {
 			componentSpec := e.specs[node.Component]

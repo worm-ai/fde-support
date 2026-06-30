@@ -58,7 +58,7 @@ type TraceSpan struct {
 
 type FileTraceWriter struct {
 	dir     string
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	records map[string]*TraceRecord
 }
 
@@ -288,6 +288,11 @@ func (w *FileTraceWriter) List(ctx context.Context, limit int) ([]TraceRecord, e
 	records := make([]TraceRecord, len(list))
 	for i, entry := range list {
 		records[i] = entry.record
+		records[i].Input = RedactMap(records[i].Input)
+		for j := range records[i].Spans {
+			records[i].Spans[j].Input = RedactMap(records[i].Spans[j].Input)
+			records[i].Spans[j].Output = RedactMap(records[i].Spans[j].Output)
+		}
 	}
 	return records, nil
 }

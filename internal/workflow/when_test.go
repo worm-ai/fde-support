@@ -117,12 +117,13 @@ func TestWhenConditionEvaluate(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "missing node is an error",
+			name: "missing node returns skip (not an error)",
 			expr: "classify_intent.confidence < 0.65",
 			outputs: map[string]map[string]any{
 				"other": {"confidence": 0.44},
 			},
-			wantErr: true,
+			want:     false,
+			wantErr:  false,
 		},
 		{
 			name: "type mismatch is an error",

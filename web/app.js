@@ -133,8 +133,9 @@ function applyTemplate(key) {
 }
 
 function buildManifest(values) {
-  return `apiVersion: solution.ai/v1alpha1
+  return `apiVersion: solution.codex/v1
 kind: Solution
+solutionType: customer-support
 metadata:
   name: ${values.solutionName || "new-solution"}
   version: 0.1.0
@@ -149,12 +150,11 @@ perception:
         - ${values.signalType || "ticket.created"}
       config:
         endpointPath: ${values.endpointPath || "/w2a/tickets"}
-        authTokenRef: env:TICKET_WEBHOOK_TOKEN
   triggers:
     - id: ticket_triage
       sensor: ticket_webhook
       signalType: ${values.signalType || "ticket.created"}
-      routeTo: support_agent
+      routeTo: classify_intent
 
 knowledge:
   sources:
@@ -163,8 +163,39 @@ knowledge:
       uri: ${values.knowledgeUri || "./data/knowledge_units.jsonl"}
       schema: faq
 
+  schemas:
+    - id: faq
+      fields:
+        - question
+        - answer
+        - product_model
+        - source_ref
+
+components:
+  - id: intent_classifier
+    category: processor
+    ref: registry.intent.beverage-router@1.0.0
+    config:
+      intents:
+        - troubleshooting
+        - warranty
+        - complaint
+        - human_handoff
+  - id: retriever
+    category: processor
+    ref: registry.retriever.local-keyword@1.0.0
+    config:
+      topK: 5
+      requireCitation: true
+  - id: answer_generator
+    category: processor
+    ref: registry.agent.cited-answer@1.2.0
+    config:
+      style: concise
+      requireGrounding: true
+
 workflow:
-  entrypoint: support_agent
+  entrypoint: classify_intent
   inputMapping:
     chat:
       message: request.message
@@ -186,6 +217,14 @@ workflow:
         message: inputs.message
         passages: retrieve_knowledge.passages
         citations: retrieve_knowledge.citations
+
+runtime:
+  modelPolicy:
+    defaultModel: gpt-4o-mini
+    maxLatencyMs: 30000
+  observability:
+    trace: required
+    logInputs: yes
 
 delivery:
   environments:

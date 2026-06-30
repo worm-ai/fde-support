@@ -31,6 +31,7 @@ func TestHandleSignalDuplicateWritesAuditTrace(t *testing.T) {
 		}},
 		w2a.NewMemorySignalIdempotencyStore(),
 		&stubTraceWriter{},
+		nil,
 	)
 
 	sensor := manifest.SensorSpec{
@@ -129,6 +130,7 @@ func TestRejectedSignalTraceDoesNotStoreRawPayload(t *testing.T) {
 		&stubExecutor{response: map[string]any{"traceId": "trace-original"}},
 		w2a.NewMemorySignalIdempotencyStore(),
 		writer,
+		nil,
 	)
 
 	sensor := manifest.SensorSpec{

@@ -50,6 +50,7 @@ type RuntimeContext interface {
 type Logger interface {
 	Info(traceID string, msg string, fields map[string]any)
 	Error(traceID string, msg string, fields map[string]any)
+	Debug(traceID string, msg string, fields map[string]any)
 }
 
 type RuntimeRequestMetadata struct {
@@ -124,6 +125,11 @@ type ActionSummary struct {
 
 type KnowledgeReader interface {
 	Retrieve(ctx context.Context, query string, topK int) (KnowledgeResult, error)
+}
+
+// KnowledgeStoreFilter allows filtering a knowledge store by source bindings.
+type KnowledgeStoreFilter interface {
+	FilterBySources(sourceIDs []string) KnowledgeReader
 }
 
 type KnowledgeResult struct {
@@ -296,7 +302,7 @@ func builtinComponentDescriptors() map[string]ComponentDescriptor {
 			Factory:      "llm_extractor",
 			ConfigSchema: map[string]string{"schema": "object?"},
 			InputSchema:  map[string]string{"text": "string?"},
-			OutputSchema: map[string]string{"status": "string", "extracted": "string?"},
+			OutputSchema: map[string]string{"extracted": "string?"},
 			Requires:     []string{"model.generate"},
 		},
 		"registry.processor.data-query@1.0.0": {
@@ -305,7 +311,7 @@ func builtinComponentDescriptors() map[string]ComponentDescriptor {
 			Factory:      "data_query",
 			ConfigSchema: map[string]string{"source": "string", "query": "string?"},
 			InputSchema:  map[string]string{"query": "string?"},
-			OutputSchema: map[string]string{"status": "string", "rows": "array", "count": "number", "citations": "array"},
+			OutputSchema: map[string]string{"rows": "array", "count": "number", "citations": "array"},
 			Requires:     []string{"knowledge.query"},
 		},
 		"registry.processor.rule-evaluator@1.0.0": {
@@ -314,7 +320,7 @@ func builtinComponentDescriptors() map[string]ComponentDescriptor {
 			Factory:      "rule_evaluator",
 			ConfigSchema: map[string]string{"rules": "array"},
 			InputSchema:  map[string]string{},
-			OutputSchema: map[string]string{"status": "string", "matched": "boolean", "result": "string?"},
+			OutputSchema: map[string]string{"matched": "boolean", "result": "string?"},
 		},
 		"registry.action.http-caller@1.0.0": {
 			Ref:          "registry.action.http-caller@1.0.0",

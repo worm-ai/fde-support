@@ -514,34 +514,28 @@ Go 接口：
 ```go
 type RuntimeContext interface {
     // Phase 1 可用
-    Env() ReadOnlyEnv
-    Trace() TraceSink
+    Environment() string               // 当前环境名
     Knowledge() KnowledgeReader          // Retrieve() 知识检索
-    Actions() ActionSummaryReader
-    Logger() Logger                      // 结构化日志（Phase 1 提供基本实现）
-    Request() RequestMetadata
+    Request() RuntimeRequestMetadata     // 请求元数据（trigger 类型、sensor 信息）
     Error() *RuntimeErrorSummary         // fallback 模式下可读的错误上下文
+    Actions() []ActionSummary           // 已完成 action 的结构化摘要
+    Logger() Logger                      // 结构化日志（Phase 1 提供基本实现）
     // Phase 1 可用（模型调用）
     Model() ModelGateway                 // LLM 调用（Phase 1 提供基于环境密钥的最小实现）
     // Phase 2 可用
-    // HTTP() HTTPCaller                 // 外部 API 调用
+    HTTP() HTTPCaller                    // 外部 API 调用
 }
-
-type ActionSummaryReader interface {
-    List() []ActionSummary
-}
-```
 
 接口说明：
 
-- `Env()` 只暴露环境解析后的只读配置。
-- `Trace()` 只允许写 span 和字段。
-- `Model()` 只暴露模型调用能力。
+- `Environment()` 只暴露当前环境名。
 - `Knowledge()` 只暴露检索能力（`Retrieve(ctx, query, topK) → KnowledgeResult`），Phase 1 实现关键词检索。
-- `Logger()` 只允许结构化日志和脱敏。
 - `Request()` 提供 trigger、signal、raw payload 等请求元数据。
 - `Error()` 仅在 fallback 模式下可读。
 - `Actions()` 只读返回已完成 action 的结构化摘要；它只用于后续节点读取执行结果，不改变控制流，不回写 action 状态。
+- `Logger()` 只允许结构化日志和脱敏。
+- `Model()` 只暴露模型调用能力。
+- `HTTP()` 只暴露 HTTP 调用能力。
 - `human_handoff` 在 fallback 模式下必须读取 `Error()`，并将 `failedNode`、`type`、`message` 写入 action 输出和 Trace。
 
 内置 MVCR 组件（Phase 1，版本均为 `@1.0.0`）：
@@ -579,9 +573,10 @@ type ComponentRegistry interface {
 type ComponentDescriptor struct {
     Ref         string
     Category    string
-    ConfigSchema map[string]string
-    InputSchema map[string]string
-    OutputSchema map[string]string
+    ConfigSchema  map[string]string
+    InputSchema   map[string]string
+    OutputSchema  map[string]string
+    Requires      []string
 }
 ```
 

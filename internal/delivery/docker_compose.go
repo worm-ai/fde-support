@@ -18,6 +18,9 @@ func GenerateDockerCompose(m *manifest.SolutionManifest, env environment.Resolve
 	if err := copyRuntimeInputs(m, outputDir); err != nil {
 		return err
 	}
+	if err := generateDockerfile(outputDir); err != nil {
+		return err
+	}
 
 	// Write docker-compose.yaml
 	compose := generateComposeContent(m, env)
@@ -48,7 +51,9 @@ func generateComposeContent(m *manifest.SolutionManifest, env environment.Resolv
 		"version: \"3.8\"",
 		"services:",
 		"  solution-runtime:",
-		fmt.Sprintf("    image: solution-runtime:%s", m.Metadata.Version),
+		"    build:",
+		"      context: .",
+		"      dockerfile: Dockerfile",
 		"    command: [\"solution\", \"run\", \"/manifest/manifest.yaml\", \"--env\", \"" + env.EnvironmentName + "\", \"--addr\", \"0.0.0.0:8080\"]",
 		"    ports:",
 		"      - \"8080:8080\"",
@@ -147,7 +152,11 @@ func copyRuntimeInputs(m *manifest.SolutionManifest, outputDir string) error {
 		}
 	}
 	for _, source := range m.Knowledge.Sources {
-		if source.URI == "" || filepath.IsAbs(source.URI) {
+		if source.URI == "" || strings.HasPrefix(source.URI, "/") || filepath.IsAbs(source.URI) {
+			continue
+		}
+		// Detect Windows drive letter (C:\, D:\, etc.)
+		if len(source.URI) >= 2 && source.URI[1] == ':' && (source.URI[0] >= 'A' && source.URI[0] <= 'Z' || source.URI[0] >= 'a' && source.URI[0] <= 'z') {
 			continue
 		}
 		cleanURI := filepath.Clean(source.URI)
@@ -211,4 +220,20 @@ func collectSensorTokens(m *manifest.SolutionManifest) []string {
 		}
 	}
 	return tokens
+}
+
+func generateDockerfile(outputDir string) error {
+	dockerfile := `FROM golang:1.21 AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o solution ./cmd/solution
+
+FROM alpine:3.19
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /app/solution /usr/local/bin/solution
+ENTRYPOINT ["solution"]
+`
+	return os.WriteFile(filepath.Join(outputDir, "Dockerfile"), []byte(dockerfile), 0o644)
 }

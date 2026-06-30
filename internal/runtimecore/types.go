@@ -84,6 +84,10 @@ func (l runtimeLogger) Error(traceID string, msg string, fields map[string]any) 
 	fmt.Fprintf(os.Stderr, "[%s] ERROR: %s %v\n", l.effectiveTraceID(traceID), msg, trace.RedactMap(fields))
 }
 
+func (l runtimeLogger) Debug(traceID string, msg string, fields map[string]any) {
+	fmt.Fprintf(os.Stderr, "[%s] DEBUG: %s %v\n", l.effectiveTraceID(traceID), msg, trace.RedactMap(fields))
+}
+
 func (l runtimeLogger) effectiveTraceID(traceID string) string {
 	if l.traceID != "" {
 		return l.traceID
