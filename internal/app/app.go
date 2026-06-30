@@ -5,12 +5,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
 	"time"
 
 	"fde-support/internal/api"
+	"fde-support/internal/delivery"
 	"fde-support/internal/environment"
+	"fde-support/internal/evaluation"
 	"fde-support/internal/knowledge"
 	"fde-support/internal/manifest"
+	"fde-support/internal/model"
+	"fde-support/internal/release"
 	"fde-support/internal/registry"
 	"fde-support/internal/runtimecore"
 	"fde-support/internal/trace"
@@ -29,6 +37,22 @@ type RuntimeApp struct {
 	TraceWriter *trace.FileTraceWriter
 	Executor    *runtimecore.Executor
 	HTTPServer  *api.Server
+}
+
+// defaultHTTPCaller is a basic HTTP caller implementation.
+type defaultHTTPCaller struct{}
+
+func (d *defaultHTTPCaller) Call(ctx context.Context, req registry.HTTPCallRequest) (registry.HTTPCallResponse, error) {
+	return registry.HTTPCallResponse{}, fmt.Errorf("http.call capability not fully configured")
+}
+
+func SignalContext() context.Context {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	return ctx
 }
 
 func ValidateManifestFile(path string) (*ValidateResult, error) {
@@ -67,7 +91,9 @@ func BuildRuntime(ctx context.Context, manifestPath string, envName string) (*Ru
 		return nil, err
 	}
 	traceWriter := trace.NewFileTraceWriter(resolvedEnv.TracePath)
-	executor, err := runtimecore.NewExecutor(m, resolvedEnv, componentRegistry, knowledgeStore, traceWriter)
+	modelGateway := model.NewMockGateway()
+	httpGateway := &defaultHTTPCaller{}
+	executor, err := runtimecore.NewExecutor(m, resolvedEnv, componentRegistry, knowledgeStore, traceWriter, modelGateway, httpGateway)
 	if err != nil {
 		return nil, err
 	}
@@ -110,4 +136,131 @@ func RunHTTP(ctx context.Context, manifestPath, envName, addr string) error {
 		}
 		return err
 	}
+}
+
+func IngestManifestFile(path string) (*knowledge.IngestReport, error) {
+	m, err := manifest.LoadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	componentRegistry, err := registry.NewBuiltinComponentRegistryFromRoot(m.BaseDir)
+	if err != nil {
+		return nil, err
+	}
+	sensorRegistry := w2a.NewBuiltinSensorRegistry()
+	errs := manifest.NewValidator(componentRegistry, sensorRegistry).Validate(m)
+	if len(errs) > 0 {
+		bytes, _ := json.Marshal(errs)
+		return nil, fmt.Errorf("manifest validation failed: %s", string(bytes))
+	}
+	resolvedEnv, err := environment.Resolve(m, "poc")
+	if err != nil {
+		return nil, err
+	}
+	return knowledge.Ingest(context.Background(), m, resolvedEnv)
+}
+
+func EvaluateManifestFile(path string) (*evaluation.EvalReport, error) {
+	m, err := manifest.LoadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	componentRegistry, err := registry.NewBuiltinComponentRegistryFromRoot(m.BaseDir)
+	if err != nil {
+		return nil, err
+	}
+	sensorRegistry := w2a.NewBuiltinSensorRegistry()
+	errs := manifest.NewValidator(componentRegistry, sensorRegistry).Validate(m)
+	if len(errs) > 0 {
+		bytes, _ := json.Marshal(errs)
+		return nil, fmt.Errorf("manifest validation failed: %s", string(bytes))
+	}
+	resolvedEnv, err := environment.Resolve(m, "poc")
+	if err != nil {
+		return nil, err
+	}
+	knowledgeStore, _, err := knowledge.Load(context.Background(), m, resolvedEnv)
+	if err != nil {
+		return nil, err
+	}
+	traceWriter := trace.NewFileTraceWriter(resolvedEnv.TracePath)
+	modelGateway := model.NewMockGateway()
+	httpGateway := &defaultHTTPCaller{}
+	executor, err := runtimecore.NewExecutor(m, resolvedEnv, componentRegistry, knowledgeStore, traceWriter, modelGateway, httpGateway)
+	if err != nil {
+		return nil, err
+	}
+	metricRegistry := evaluation.NewMetricRegistry()
+	runner := evaluation.NewRunner(executor, m, metricRegistry)
+	ctx := context.Background()
+	for _, ds := range m.Evaluation.Datasets {
+		if ds.URI == "" {
+			continue
+		}
+		resolved := ds.URI
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(filepath.Dir(path), resolved)
+		}
+		report, err := runner.Run(ctx, resolved, m.Evaluation.Gates)
+		if err != nil {
+			return nil, err
+		}
+		return report, nil
+	}
+	return nil, fmt.Errorf("no evaluation datasets configured")
+}
+
+func ReleaseManifestFile(path, envName string) (*release.ReleaseReport, error) {
+	m, err := manifest.LoadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	componentRegistry, err := registry.NewBuiltinComponentRegistryFromRoot(m.BaseDir)
+	if err != nil {
+		return nil, err
+	}
+	sensorRegistry := w2a.NewBuiltinSensorRegistry()
+	errs := manifest.NewValidator(componentRegistry, sensorRegistry).Validate(m)
+	if len(errs) > 0 {
+		bytes, _ := json.Marshal(errs)
+		return nil, fmt.Errorf("manifest validation failed: %s", string(bytes))
+	}
+	resolvedEnv, err := environment.Resolve(m, envName)
+	if err != nil {
+		return nil, err
+	}
+	checker := release.NewChecker(m, resolvedEnv)
+	report, err := checker.Run(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if report.Passed {
+		outputDir := filepath.Join(filepath.Dir(path), "deploy", envName)
+		if err := delivery.GenerateDockerCompose(m, resolvedEnv, outputDir); err != nil {
+			return nil, fmt.Errorf("generate deployment artifacts: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "deployment artifacts generated at %s\n", outputDir)
+	}
+	return report, nil
+}
+
+func PublishComponentFile(componentDir string) (string, error) {
+	outputDir := filepath.Join(componentDir, "..", "published")
+	return registry.PublishComponent(componentDir, outputDir)
+}
+
+func ResolveTemplatePath(name string) (string, error) {
+	templateDir := filepath.Join(findProjectRoot(), "templates")
+	path := filepath.Join(templateDir, name+".yaml")
+	if _, err := os.Stat(path); err != nil {
+		return "", fmt.Errorf("template %q not found at %s", name, path)
+	}
+	return path, nil
+}
+
+func findProjectRoot() string {
+	if wd, err := os.Getwd(); err == nil {
+		return wd
+	}
+	return "."
 }

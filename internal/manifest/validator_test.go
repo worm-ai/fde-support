@@ -127,7 +127,7 @@ func minimalManifest() SolutionManifest {
 					ID:         "ticket_triage",
 					Sensor:     "ticket_webhook",
 					SignalType: "ticket.created",
-					RouteTo:    "support_agent",
+					RouteTo:    "classify_intent",
 				},
 			},
 		},
@@ -146,7 +146,7 @@ func minimalManifest() SolutionManifest {
 			{ID: "human_handoff", Category: "action", Ref: "registry.action.human-handoff@1.0.0", Config: map[string]any{"queue": "support-l2"}},
 		},
 		Workflow: WorkflowSpec{
-			Entrypoint: "support_agent",
+			Entrypoint: "classify_intent",
 			OnError: OnErrorSpec{
 				Retry:        1,
 				FallbackNode: "handoff",

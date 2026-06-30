@@ -27,6 +27,7 @@ type ComponentDescriptor struct {
 	ConfigSchema map[string]string
 	InputSchema  map[string]string
 	OutputSchema map[string]string
+	Requires     []string
 }
 
 type Component interface {
@@ -41,6 +42,16 @@ type RuntimeContext interface {
 	Request() RuntimeRequestMetadata
 	Error() *RuntimeErrorSummary
 	Actions() []ActionSummary
+	Model() ModelGateway
+	HTTP() HTTPCaller
+	Logger() Logger
+}
+
+
+
+type Logger interface {
+	Info(traceID string, msg string, fields map[string]any)
+	Error(traceID string, msg string, fields map[string]any)
 }
 
 type RuntimeRequestMetadata struct {
@@ -55,6 +66,60 @@ type RuntimeErrorSummary struct {
 	Type       string `json:"type"`
 	Attempts   int    `json:"attempts"`
 }
+type ModelGateway interface {
+	Generate(ctx context.Context, req ModelGenerateRequest) (ModelGenerateResponse, error)
+}
+
+type ModelGenerateRequest struct {
+	Model     string
+	Messages  []ModelMessage
+	MaxTokens int
+}
+
+type ModelMessage struct {
+	Role    string
+	Content string
+}
+
+type ModelGenerateResponse struct {
+	Model   string
+	Content string
+	Usage   ModelUsageSummary
+}
+
+
+// HTTPCaller allows components to make external HTTP requests.
+type HTTPCaller interface {
+	Call(ctx context.Context, req HTTPCallRequest) (HTTPCallResponse, error)
+}
+
+// HTTPCallRequest is a component-facing HTTP request.
+type HTTPCallRequest struct {
+	URL     string
+	Method  string
+	Headers map[string]string
+	Body    string
+}
+
+// HTTPCallResponse is a component-facing HTTP response.
+type HTTPCallResponse struct {
+	StatusCode int
+	Body       string
+	Headers    map[string]string
+}
+
+type ModelUsageSummary struct {
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	CostUSD          float64
+}
+
+type Citation struct {
+	Source string `json:"source"`
+	Ref    string `json:"ref"`
+}
+
 
 type ActionSummary struct {
 	Node   string         `json:"node"`
@@ -69,11 +134,6 @@ type KnowledgeResult struct {
 	Passages  []string         `json:"passages"`
 	Citations []Citation       `json:"citations"`
 	Raw       []map[string]any `json:"raw,omitempty"`
-}
-
-type Citation struct {
-	Source string `json:"source"`
-	Ref    string `json:"ref"`
 }
 
 type ComponentRegistry interface {

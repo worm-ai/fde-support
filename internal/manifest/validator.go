@@ -22,6 +22,28 @@ type Validator struct {
 	sensors    w2a.SensorRegistry
 }
 
+
+// M2: supported platform capabilities
+var supportedCapabilities = map[string]bool{
+	"model.generate":    true,
+	"knowledge.search":  true,
+	"knowledge.query":   true, // M2
+	"http.call":         true, // M2
+}
+
+func validateComponentRequires(componentID string, desc registry.ComponentDescriptor, path string, add func(string, string, string)) {
+	for _, req := range desc.Requires {
+		available, known := supportedCapabilities[req]
+		if !known {
+			add("UNKNOWN_COMPONENT_REQUIRES", path+".requires", "component requires unknown capability: "+req)
+			continue
+		}
+		if !available {
+			add("COMPONENT_REQUIRES_UNAVAILABLE", path+".requires", "component requires capability that is not available in this phase: "+req)
+		}
+	}
+}
+
 func NewValidator(components registry.ComponentRegistry, sensors w2a.SensorRegistry) *Validator {
 	return &Validator{components: components, sensors: sensors}
 }
@@ -46,6 +68,9 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 	}
 	if strings.TrimSpace(m.Workflow.Entrypoint) == "" {
 		add("MISSING_REQUIRED_FIELD", "workflow.entrypoint", "workflow.entrypoint is required")
+	}
+	if len(m.Workflow.Nodes) > 0 && m.Workflow.Entrypoint != "" && m.Workflow.Entrypoint != m.Workflow.Nodes[0].ID {
+		add("INVALID_ENTRYPOINT", "workflow.entrypoint", "workflow.entrypoint must be the id of the first workflow node")
 	}
 
 	sensorByID := map[string]SensorSpec{}
@@ -104,6 +129,7 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 		if string(desc.Category) != component.Category {
 			add("COMPONENT_CATEGORY_MISMATCH", path+".category", "component category does not match registry descriptor")
 		}
+		validateComponentRequires(component.ID, desc, path, add)
 		if component.Category != string(registry.CategoryProcessor) && component.Category != string(registry.CategoryAction) {
 			add("INVALID_COMPONENT_CATEGORY", path+".category", "component category must be processor or action")
 		}
@@ -161,6 +187,9 @@ func (v *Validator) Validate(m *SolutionManifest) []ValidationError {
 	for _, issue := range compileIssues {
 		add(issue.Code, issue.Path, issue.Message)
 	}
+
+		// Type flow validation: check upstream/downstream type compatibility
+	validateTypeFlow(m.Workflow.Nodes, componentDescByID, plan, add)
 
 	for i, node := range m.Workflow.Nodes {
 		path := fmt.Sprintf("workflow.nodes[%d]", i)

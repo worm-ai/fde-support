@@ -1,0 +1,120 @@
+apiVersion: solution.ai/v1alpha1
+kind: Solution
+metadata:
+  name: customer-support-template
+  version: 0.1.0
+  owner: fde-team
+  industry: general
+
+perception:
+  sensors:
+    - id: support_webhook
+      ref: "@world2agent/sensor-webhook@1.0.0"
+      signalTypes:
+        - ticket.created
+      config:
+        endpointPath: /w2a/tickets
+        authTokenRef: env:W2A_TOKEN
+  triggers:
+    - id: ticket_route
+      sensor: support_webhook
+      signalType: ticket.created
+      routeTo: support_agent
+
+knowledge:
+  sources:
+    - id: faq_data
+      type: jsonl
+      uri: ./data/knowledge.jsonl
+      schema: faq
+  schemas:
+    - id: faq
+      fields:
+        - question
+        - answer
+        - source_ref
+  qualityGates:
+    - type: missing_required_fields
+      severity: block
+      scope:
+        - faq
+
+components:
+  - id: classifier
+    category: processor
+    ref: registry.intent.support-router@1.0.0
+    config:
+      intents:
+        - troubleshooting
+        - warranty
+        - complaint
+        - human_handoff
+  - id: retriever
+    category: processor
+    ref: registry.retriever.local-keyword@1.0.0
+    config:
+      topK: 5
+      requireCitation: true
+  - id: generator
+    category: processor
+    ref: registry.agent.cited-answer@1.0.0
+    config:
+      requireGrounding: true
+  - id: handoff
+    category: action
+    ref: registry.action.human-handoff@1.0.0
+    config:
+      queue: support-l2
+
+workflow:
+  entrypoint: support_agent
+  onError:
+    retry: 1
+    fallbackNode: handoff
+  inputMapping:
+    chat:
+      message: request.message
+    w2a_signal:
+      message: signal.source_event.data.description
+  nodes:
+    - id: classify_intent
+      component: classifier
+      inputs:
+        message: inputs.message
+    - id: retrieve_knowledge
+      component: retriever
+      inputs:
+        query: inputs.message
+    - id: generate_answer
+      component: generator
+      inputs:
+        message: inputs.message
+        passages: retrieve_knowledge.passages
+        citations: retrieve_knowledge.citations
+    - id: handoff
+      component: handoff
+      when: classify_intent.confidence < 0.65
+      inputs:
+        message: inputs.message
+
+runtime:
+  knowledgeBindings:
+    - component: retriever
+      sources:
+        - faq_data
+  modelPolicy:
+    defaultModel: gpt-4.1
+    fallbackModel: gpt-4.1-mini
+    maxLatencyMs: 8000
+  observability:
+    trace: required
+    logInputs: masked
+    retainDays: 7
+
+delivery:
+  environments:
+    - name: poc
+      type: shared_sandbox
+      config:
+        modelKeyRef: env:OPENAI_API_KEY
+        tracePath: ./.solution/traces

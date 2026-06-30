@@ -20,12 +20,14 @@ type Executor struct {
 	registry    registry.ComponentRegistry
 	knowledge   registry.KnowledgeReader
 	traceWriter *trace.FileTraceWriter
+	modelGateway registry.ModelGateway
+	httpGateway  registry.HTTPCaller
 	components  map[string]registry.Component
 	descriptors map[string]registry.ComponentDescriptor
 	specs       map[string]manifest.ComponentSpec
 }
 
-func NewExecutor(m *manifest.SolutionManifest, env environment.ResolvedEnvironment, reg registry.ComponentRegistry, knowledge registry.KnowledgeReader, traceWriter *trace.FileTraceWriter) (*Executor, error) {
+func NewExecutor(m *manifest.SolutionManifest, env environment.ResolvedEnvironment, reg registry.ComponentRegistry, knowledge registry.KnowledgeReader, traceWriter *trace.FileTraceWriter, modelGateway registry.ModelGateway, httpGateway registry.HTTPCaller) (*Executor, error) {
 	nodeSpecs := make([]workflow.NodeSpec, len(m.Workflow.Nodes))
 	for i, node := range m.Workflow.Nodes {
 		nodeSpecs[i] = workflow.NodeSpec{
@@ -50,6 +52,7 @@ func NewExecutor(m *manifest.SolutionManifest, env environment.ResolvedEnvironme
 		components:  map[string]registry.Component{},
 		descriptors: map[string]registry.ComponentDescriptor{},
 		specs:       map[string]manifest.ComponentSpec{},
+		modelGateway: modelGateway,
 	}
 	for _, spec := range m.Components {
 		component, err := reg.Instantiate(spec.ID, spec.Ref, spec.Config)
@@ -151,7 +154,7 @@ func (e *Executor) executeNodeWithRetry(ctx context.Context, traceID string, nod
 			continue
 		}
 		nodeCtx, cancel := context.WithTimeout(ctx, time.Duration(e.env.MaxLatencyMs)*time.Millisecond)
-		output, err := component.Run(nodeCtx, nodeInput, runtimeContext{environment: e.env.EnvironmentName, knowledge: e.knowledge, request: req, errSummary: errSummary, actions: actions})
+		output, err := component.Run(nodeCtx, nodeInput, runtimeContext{environment: e.env.EnvironmentName, knowledge: e.knowledge, modelGateway: e.modelGateway, httpGateway: e.httpGateway, request: req, errSummary: errSummary, actions: actions, logger: runtimeLogger{traceID: traceID}})
 		cancel()
 		if err != nil {
 			lastErr = err

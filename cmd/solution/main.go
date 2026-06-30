@@ -55,6 +55,62 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 
+	ingestCmd := &cobra.Command{
+		Use:   "ingest manifest.yaml",
+		Short: "Ingest knowledge sources and run quality gates",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := app.IngestManifestFile(args[0])
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				bytes, _ := json.MarshalIndent(result, "", "  ")
+				fmt.Println(string(bytes))
+			} else {
+				fmt.Printf("ingest %s: %d records, %d ingested\n", result.Status, result.TotalRecords, result.TotalIngested)
+			}
+			if result.Status == "blocked" {
+				os.Exit(1)
+			}
+			return nil
+		},
+	}
+
+	evaluateCmd := &cobra.Command{
+		Use:   "evaluate manifest.yaml",
+		Short: "Evaluate a Solution against golden cases",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			report, err := app.EvaluateManifestFile(args[0])
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				bytes, _ := json.MarshalIndent(report, "", "  ")
+				fmt.Println(string(bytes))
+			} else {
+				fmt.Printf("evaluate %s: %d/%d cases passed\n", report.Solution, report.PassedCases, report.TotalCases)
+				for name, value := range report.Metrics {
+					fmt.Printf("  %s: %.4f\n", name, value)
+				}
+				for _, gate := range report.GateResults {
+					status := "PASS"
+					if !gate.Passed {
+						status = "FAIL"
+					}
+					fmt.Printf("  gate %s: %s (%.4f >= %.4f, %s)\n", gate.Metric, status, gate.Actual, gate.Min, gate.Severity)
+				}
+			}
+			for _, gate := range report.GateResults {
+				if !gate.Passed && gate.Severity == "block" && gate.Schedule == "onRelease" {
+					os.Exit(1)
+				}
+			}
+			return nil
+		},
+	}
+
 	var envName string
 	var addr string
 	runCmd := &cobra.Command{
@@ -70,6 +126,6 @@ func newRootCommand() *cobra.Command {
 	runCmd.Flags().StringVar(&envName, "env", "poc", "delivery environment name")
 	runCmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8080", "HTTP listen address")
 
-	root.AddCommand(validateCmd, runCmd)
+	root.AddCommand(validateCmd, ingestCmd, evaluateCmd, runCmd)
 	return root
 }
