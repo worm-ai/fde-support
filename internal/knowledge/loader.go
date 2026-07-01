@@ -410,10 +410,17 @@ func fingerprintSourceReports(sources []SourceReport) string {
 }
 
 func resolveManifestPath(baseDir, uri string) string {
+	cleanBase := filepath.Clean(baseDir)
 	if filepath.IsAbs(uri) {
 		return filepath.Clean(uri)
 	}
-	return filepath.Clean(filepath.Join(baseDir, uri))
+	resolved := filepath.Clean(filepath.Join(cleanBase, uri))
+	// Guard against path traversal via .. sequences
+	rel, err := filepath.Rel(cleanBase, resolved)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return filepath.Clean(filepath.Join(cleanBase, filepath.Base(uri)))
+	}
+	return resolved
 }
 
 func hasBlock(items []QualityReportItem) bool {
