@@ -244,7 +244,11 @@ func findWebRoot(start string) string {
 // cspMiddleware adds Content-Security-Policy header to prevent XSS.
 func cspMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'")
+		// Use Add instead of Set to avoid overwriting any more specific CSP
+		// header that downstream handlers or other middleware may have set.
+		if w.Header().Get("Content-Security-Policy") == "" {
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

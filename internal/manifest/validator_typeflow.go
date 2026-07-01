@@ -11,11 +11,11 @@ import (
 // compatibleTypes is the 5x5 type compatibility matrix (flat primitive types only).
 // Rows = upstream output type, Columns = downstream expected type.
 var compatibleTypes = map[string]map[string]bool{
-	"string":  {"string": true},
-	"number":  {"number": true},
-	"boolean": {"boolean": true},
-	"object":  {"object": true},
-	"array":   {"array": true},
+	"string":  {"string": true, "number": false, "boolean": false, "object": false, "array": false},
+	"number":  {"string": false, "number": true, "boolean": false, "object": false, "array": false},
+	"boolean": {"string": false, "number": false, "boolean": true, "object": false, "array": false},
+	"object":  {"string": false, "number": false, "boolean": false, "object": true, "array": false},
+	"array":   {"string": false, "number": false, "boolean": false, "object": false, "array": true},
 }
 
 // validateTypeFlow checks that upstream node outputs are type-compatible with downstream node inputs.

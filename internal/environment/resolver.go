@@ -105,6 +105,10 @@ func numberAsInt(value any) (int, bool) {
 	case int64:
 		return int(v), true
 	case float64:
+		// Warn on truncation for values that lose precision as int
+		if float64(int(v)) != v {
+			fmt.Fprintf(os.Stderr, "WARNING: numberAsInt truncating %v to %d\n", v, int(v))
+		}
 		return int(v), true
 	default:
 		return 0, false
