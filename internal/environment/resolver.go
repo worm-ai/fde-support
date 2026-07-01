@@ -84,7 +84,11 @@ func (e ResolvedEnvironment) ResolveSecret(ref string) (string, bool) {
 }
 
 func (e ResolvedEnvironment) ReportPath() string {
-	return filepath.Join(filepath.Dir(e.TracePath), "reports", "knowledge-quality.json")
+	dir := filepath.Dir(e.TracePath)
+	if dir == "." || dir == "" {
+		dir = "."
+	}
+	return filepath.Join(dir, "reports", "knowledge-quality.json")
 }
 
 func resolvePath(baseDir, value string) string {

@@ -421,7 +421,9 @@ func (c *ruleEvaluator) Run(ctx context.Context, input map[string]any, runtime R
 	}
 	best := matched[0]
 	for _, m := range matched[1:] {
-		if p, _ := m["priority"].(int); p > best["priority"].(int) {
+		pVal, _ := shared.ToFloat64(m["priority"])
+		bestVal, _ := shared.ToFloat64(best["priority"])
+		if pVal > bestVal {
 			best = m
 		}
 	}

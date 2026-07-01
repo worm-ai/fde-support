@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"bytes"
 )
 
 // PythonBridge invokes the Python knowledge worker as a subprocess.
@@ -35,10 +37,15 @@ func (b *PythonBridge) Run(inputPath, outputPath string) (int, error) {
 		return 0, fmt.Errorf("input file not found: %w", err)
 	}
 
+	var stderrBuf bytes.Buffer
 	cmd := exec.Command(b.PythonBin, script, inputPath, outputPath)
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = &stderrBuf
 	output, err := cmd.Output()
 	if err != nil {
+		stderr := stderrBuf.String()
+		if stderr != "" {
+			return 0, fmt.Errorf("python worker failed: %w (stderr: %s)", err, stderr)
+		}
 		return 0, fmt.Errorf("python worker failed: %w (output: %s)", err, string(output))
 	}
 

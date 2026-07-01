@@ -114,12 +114,14 @@ func (r *Runner) runCase(ctx context.Context, gc GoldenCase) EvalResult {
 	}
 
 	req := runtimecore.RuntimeRequest{
-		Trigger:    gc.Trigger,
-		Request:    gc.Request,
-		RawPayload: gc.RawPayload,
+		Trigger: gc.Trigger,
 	}
 	if gc.Trigger.Type == "w2a_signal" {
 		req.Signal = gc.RawPayload
+		req.RawPayload = gc.RawPayload
+	} else {
+		req.Request = gc.Request
+		req.RawPayload = gc.RawPayload
 	}
 
 	response, traceRecord, err := r.executor.Execute(ctx, req)

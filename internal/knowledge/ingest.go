@@ -1,6 +1,8 @@
 package knowledge
 
 import (
+	"io"
+
 	"context"
 	"encoding/csv"
 	"fmt"
@@ -189,7 +191,15 @@ func ingestCSV(ctx context.Context, source manifest.KnowledgeSourceSpec, resolve
 	for {
 		lineNo++
 		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
 		if err != nil {
+			result.Status = "blocked"
+			result.Items = append(result.Items, QualityReportItem{
+				Code: "KNOWLEDGE_CSV_READ_FAILED", Severity: "block", Source: source.ID,
+				Line: lineNo, Message: err.Error(),
+			})
 			break
 		}
 		if len(record) == 0 || allEmpty(record) {
