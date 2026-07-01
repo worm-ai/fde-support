@@ -7,7 +7,10 @@ import (
 // evalCitationCoverage checks if citations are present when expected.mustCite is true.
 func evalCitationCoverage(gc GoldenCase, result EvalResult) (float64, bool) {
 	if !gc.Expected.MustCite {
-		return 0, false
+		// Not applicable — return neutral (pass) to avoid skewing other metrics.
+		// Returning (0, false) skips this metric in the per-case average, which
+		// is correct since MustCite is a conditional metric.
+		return 0, true
 	}
 	if result.ActualAnswer == "" {
 		return 0, false

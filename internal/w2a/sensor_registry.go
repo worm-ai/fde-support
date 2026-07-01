@@ -40,7 +40,8 @@ func (r *BuiltinSensorRegistry) Resolve(ref string) (SensorDescriptor, error) {
 	if !ok {
 		return SensorDescriptor{}, fmt.Errorf("unknown sensor ref %q", ref)
 	}
-	if !strings.Contains(ref, "@1.0.0") {
+	// Validate that the ref includes a pinned version.
+	if !strings.Contains(ref, "@") {
 		return SensorDescriptor{}, fmt.Errorf("sensor ref %q must pin version", ref)
 	}
 	return desc, nil

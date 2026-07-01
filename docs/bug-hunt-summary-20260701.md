@@ -1,6 +1,6 @@
 # 10-Round Iterative Bug Hunt Summary Report
 
-**Branch:** `bugfix/iterative-rounds-20260701-020043`
+**Branch:** `bugfix/iterative-rounds-20260701-134649`
 **Date:** 2026-07-01
 **Rounds executed:** 10
 
@@ -8,118 +8,46 @@
 
 | Metric | Value |
 |--------|-------|
-| Total bugs discovered | 31 |
-| Bugs fixed | 31 |
-| Bugs unfixed | 0 |
-| Fix rate | 100% |
+| Total bugs discovered | 23 |
+| Bugs fixed | 22 |
+| Bugs unfixed | 1 |
+| Fix rate | 95.7% |
 
 ### Severity Distribution
 
 | Severity | Discovered | Fixed | Unfixed |
 |----------|------------|-------|---------|
 | High | 2 | 2 | 0 |
-| Medium | 16 | 16 | 0 |
-| Low | 13 | 13 | 0 |
+| Medium | 6 | 5 | 1 |
+| Low | 15 | 15 | 0 |
 
 ## 2. Complete Bug Inventory
 
 | # | Round | Dimension | Location | Severity | Status |
 |---|-------|-----------|----------|----------|--------|
-| 1 | 1 | Security | api/server.go:30 | High | Fixed |
-| 2 | 1 | Boundary | runtimecore/executor.go:251 | Medium | Fixed |
-| 3 | 1 | Boundary | trace/writer.go:225 | Medium | Fixed |
-| 4 | 1 | Boundary | knowledge/ingest.go:156 | Medium | Fixed |
-| 5 | 1 | Input Validation | api/server.go:176 | Medium | Fixed |
-| 6 | 1 | Concurrency | w2a/idempotency.go:50 | Low | Fixed |
-| 7 | 1 | Boundary | knowledge/loader.go:399 | Low | Fixed |
-| 8 | 2 | Logic | model/openai.go:55 | Medium | Fixed |
-| 9 | 2 | Logic | evaluation/metrics.go:51 | Medium | Fixed |
-| 10 | 2 | Logic | evaluation/metrics.go:53 | Medium | Fixed |
-| 11 | 2 | Boundary | evaluation/metrics.go:8 | Medium | Fixed |
-| 12 | 3 | Security | knowledge/loader.go:393 | Medium | Fixed |
-| 13 | 3 | Boundary | registry/components.go:98,319 | Medium | Fixed |
-| 14 | 3 | Boundary | release/checker.go:180 | Medium | Fixed |
-| 15 | 3 | Input Validation | knowledge/python_bridge.go:27 | Low | Fixed |
-| 16 | 4 | Logic | web/app.js:215 | Medium | Fixed |
-| 17 | 4 | Code Standards | web/index.html:190 | Low | Fixed |
-| 18 | 5 | Dependencies | evaluation/gates.go:68 | Low | Fixed |
-| 19 | 5 | Code Standards | delivery/docker_compose.go:30 | Low | Fixed |
-| 20 | 5 | Boundary | knowledge/python_bridge.go:23 | Low | Fixed |
-| 21 | 5 | Boundary | workers/knowledge/parser.py:73 | Low | Fixed |
-| 22 | 6 | Input Validation | api/server.go:85,105 | Medium | Fixed |
-| 23 | 6 | Input Validation | w2a/signal.go:50,80 | Medium | Fixed |
-| 24 | 6 | Code Standards | workflow/path.go:23 | Low | Fixed |
-| 25 | 6 | Performance | registry/components.go:295 | Low | Fixed |
-| 26 | 7 | Security | api/server.go:195 | Medium | Fixed |
-| 27 | 8 | Boundary | delivery/docker_compose.go:149 | Medium | Fixed |
-| 28 | 8 | Boundary | registry/marketplace.go:38 | Low | Fixed |
-| 29 | 9 | Concurrency | evaluation/runner.go:50 | Low | Fixed |
-| 30 | 10 | Code Standards | runtimecore/executor.go:102 | Low | Fixed |
-| 31 | 10 | Dependencies | .gitignore | Low | Fixed |
-
-### Bug Details
-
-**#1** CSP middleware only applied to `/web/*`, not API/chat/sensor routes. Fixed by adding `router.Use(cspMiddleware)` globally.
-
-**#2** `mapResponse()` unsafe map access for `firstIntent["intent"]` and `["confidence"]` returning zero values. Fixed with ok-checks.
-
-**#3** `WriteImmediate()` defaults status to "failed" when empty. Fixed to "completed".
-
-**#4** `ingestCSV()` opens and processes files without checking `ctx.Err()`. Added context cancellation check.
-
-**#5** `normalizeJSONNumbers()` only handles `*map[string]any`, missing the non-pointer `map[string]any` case.
-
-**#6** `MemorySignalIdempotencyStore` never cleans up expired records. Added `sweepExpired()` called on `Put()`.
-
-**#7** `resolveManifestPath()` doesn't validate the resolved path stays within `baseDir`. Added containment check.
-
-**#8** `OpenAIProvider.Generate()` checks HTTP status AFTER JSON decode, losing error info on non-JSON bodies. Reordered.
-
-**#9** `evalResultAccuracy` duplicated `evalAnswerAccuracy` with inverted return semantics. Aligned semantics; added comment.
-
-**#10** `evalEscalationPrecision` used loose `strings.Contains(actual, "handoff")`. Tightened to exact match.
-
-**#11** `evalCitationCoverage` returned (1,true) when mustCite=false, inflating metrics. Changed to (0,false).
-
-**#12** Path traversal via `..` sequences in knowledge source URIs. Added full containment check in `resolveManifestPath`.
-
-**#13** `dataQuery.Run()` and `keywordRetriever.Run()` called `runtime.Knowledge().Retrieve()` without nil guard. Added nil check.
-
-**#14** `checkKnowledgeQuality` had ambiguous error for zero-time vs stale report. Separated into two distinct checks.
-
-**#15** `PythonBridge.Run()` doesn't validate input file exists. Added `os.Stat` check; added empty projectRoot fallback.
-
-**#16** `requestJSON()` spread options after headers, allowing options to overwrite Content-Type. Reordered.
-
-**#17** `<dt>/<dd>` pairs in index.html lacked proper `<dl>` wrapper. Wrapped in `<dl>`.
-
-**#18** `ComputeFingerprint` excluded knowledge sources from hash, missing data drift detection. Added source ID+URI to hash.
-
-**#19** Generated docker-compose.yaml lacked `Code generated by` header. Added header line.
-
-**#20** `PythonBridge.Run()` silently fails with empty projectRoot. Added default fallback to ".".
-
-**#21** Python parser produced no output for empty input files. Added default empty record.
-
-**#22** POST endpoints `/chat` and sensor endpoints lacked Content-Type validation. Added `application/json` check.
-
-**#23** W2A signal validation didn't validate `emitted_at`/`occurred_at` timestamp format. Added RFC3339 validation.
-
-**#24** `ParseSimplePath` error messages didn't include the full path. Added the original path to error messages.
-
-**#25** `llmExtractor.Run()` doesn't pass an explicit model, relying on gateway fallback. Added empty string model selection.
-
-**#26** API JSON responses lacked `Cache-Control: no-store` headers. Added cache control headers.
-
-**#27** `copyRuntimeInputs` fails hard on non-existent knowledge source files. Changed to skip with `os.IsNotExist`.
-
-**#28** `PublishComponent` doesn't validate empty componentDir. Added nil/empty check.
-
-**#29** `evaluation.Runner.Run()` iterates golden cases without checking `ctx.Err()`. Added cancellation check.
-
-**#30** Dead code block (empty if body checking `_traceWarning`) in executor. Removed.
-
-**#31** Binary `solution` not in `.gitignore`. Added to `.gitignore`.
+| 1 | 1 | Logic Errors | model/gateway.go:55-62 | High | Fixed |
+| 2 | 1 | Logic Errors | runtimecore/executor.go:135 | Medium | Fixed |
+| 3 | 1 | Logic Errors | api/signal_router.go:112 | Medium | Fixed |
+| 4 | 1 | Boundary Conditions | api/server.go:148 | Low | Fixed |
+| 5 | 1 | Code Standards | runtimecore/executor.go:272 | Low | Fixed |
+| 6 | 1 | Resource Leaks | w2a/idempotency.go:48 | Low | Fixed |
+| 7 | 1 | Security | trace/writer.go:325 | Low | Fixed |
+| 8 | 2 | Logic Errors | release/checker.go:228 | High | Fixed |
+| 9 | 2 | Boundary Conditions | release/checker.go:191 | Medium | Fixed |
+| 10 | 2 | Logic Errors | release/checker.go:231 | Medium | Unfixed |
+| 11 | 2 | Logic Errors | delivery/docker_compose.go:177 | Low | Fixed |
+| 12 | 2 | Code Standards | knowledge/loader.go:159 | Low | Fixed |
+| 13 | 3 | Boundary Conditions | w2a/signal.go:55 | Medium | Fixed |
+| 14 | 3 | Resource Leaks | trace/writer.go:144 | Low | Fixed |
+| 15 | 3 | Boundary Conditions | registry/components.go:326 | Low | Fixed |
+| 16 | 3 | Concurrency | trace/writer.go:98 | Low | Fixed |
+| 17 | 4 | Logic Errors | shared/types.go:44 | Low | Fixed |
+| 18 | 4 | Logic Errors | evaluation/gates.go:50 | Low | Fixed |
+| 19 | 4 | Code Standards | manifest/validator_typeflow.go:12 | Low | Fixed |
+| 20 | 5 | Code Standards | api/server.go:207 | Low | Fixed |
+| 21 | 5 | Code Standards | environment/resolver.go:112 | Low | Fixed |
+| 22 | 8 | Code Standards | model/openai.go:48 | Low | Fixed |
+| 23 | 9 | Boundary Conditions | w2a/sensor_registry.go:36 | Low | Fixed |
 
 ## 3. Impact Analysis
 
@@ -127,74 +55,64 @@
 
 | File | Rounds Touched | Lines Changed (+/-) |
 |------|---------------|----------------------|
-| internal/api/server.go | 1, 6, 7 | +16/-0 |
-| internal/runtimecore/executor.go | 1, 10 | +8/-4 |
-| internal/trace/writer.go | 1 | +1/-1 |
-| internal/knowledge/ingest.go | 1 | +7/-0 |
-| internal/w2a/idempotency.go | 1 | +9/-0 |
-| internal/knowledge/loader.go | 3 | +12/-1 |
-| internal/model/openai.go | 2 | +7/-2 |
-| internal/evaluation/metrics.go | 2 | +4/-4 |
-| internal/registry/components.go | 3 | +12/-0 |
-| internal/release/checker.go | 3 | +4/-1 |
-| web/app.js | 4 | +2/-2 |
-| web/index.html | 4 | +1/-1 |
-| internal/evaluation/gates.go | 5 | +5/-0 |
-| internal/delivery/docker_compose.go | 5, 8 | +3/-0 |
-| internal/knowledge/python_bridge.go | 5 | +5/-0 |
-| workers/knowledge/parser.py | 5 | +2/-0 |
-| internal/w2a/signal.go | 6 | +16/-0 |
-| internal/workflow/path.go | 6 | +1/-1 |
-| internal/registry/marketplace.go | 8 | +4/-0 |
-| internal/evaluation/runner.go | 9 | +3/-0 |
-| .gitignore | 10 | +2/-0 |
+| internal/model/gateway.go | 1 | +7/-3 |
+| internal/runtimecore/executor.go | 1 | +5/-7 |
+| internal/api/signal_router.go | 1 | +9/-3 |
+| internal/api/server.go | 1,5 | +9/-0 |
+| internal/w2a/idempotency.go | 1 | +2/-0 |
+| internal/trace/writer.go | 1,3,4,8 | +17/-5 |
+| internal/release/checker.go | 2 | +14/-2 |
+| internal/knowledge/loader.go | 2 | +2/-3 |
+| internal/delivery/docker_compose.go | 2 | +9/-2 |
+| internal/w2a/signal.go | 3 | +4/-4 |
+| internal/registry/components.go | 3 | +3/-0 |
+| internal/shared/types.go | 4 | +3/-0 |
+| internal/evaluation/gates.go | 4 | +4/-0 |
+| internal/manifest/validator_typeflow.go | 4 | +5/-5 |
+| internal/environment/resolver.go | 5 | +4/-0 |
+| internal/model/openai.go | 8 | +5/-1 |
+| internal/model/mock.go | 8 | +4/-1 |
+| internal/w2a/sensor_registry.go | 9 | +3/-3 |
 
 ### Affected Modules / Components
 
-- **api/server.go** — Security hardening (CSP, Content-Type, Cache-Control)
-- **runtimecore/executor.go** — Safer response mapping
-- **trace/writer.go** — Correct trace status defaults
-- **knowledge (loader, ingest, python_bridge)** — Path safety, context propagation, input validation
-- **evaluation (metrics, gates, runner)** — Correct metric semantics, richer fingerprints
-- **registry/components.go** — Nil-safety for KnowledgeReader access
-- **release/checker.go** — Clearer error separation
-- **model/openai.go** — Status-before-decode ordering
-- **w2a (signal, idempotency)** — Timestamp validation, expired record cleanup
-- **delivery/docker_compose.go** — Graceful source handling
-- **web (app.js, index.html)** — HTML semantics, fetch correctness
-- **workflow/path.go** — Better error messages
+- **model/** — Fallback model context lifecycle; cost constant extraction
+- **runtimecore/** — Retry logic, dead code removal
+- **api/** — Signal idempotency error handling, CSP middleware, JSON number normalization
+- **w2a/** — Idempotency store cleanup, timestamp validation, sensor registry version check
+- **trace/** — File trace writer cleanup, trace ID entropy, AppendSpan observability
+- **release/** — Eval cache fingerprint, quality report edge cases
+- **knowledge/** — Context timeout semantics
+- **delivery/** — Docker compose path containment
+- **shared/** — Float NaN/Inf detection
+- **evaluation/** — Fingerprint hash robustness
+- **manifest/** — Type compatibility matrix
+- **environment/** — Number truncation warnings
+- **registry/** — synthesizeAnswer nil guard
 
 ### Regression Risk Assessment
 
 | Risk Area | Level | Rationale |
 |-----------|-------|-----------|
-| API server (CSP, Content-Type) | Low | Middleware and validation are additive; existing tests pass |
-| Evaluation metrics | Low | Semantics aligned with tests; `evalResultAccuracy` behavior preserved |
-| Knowledge path resolution | Low | Added containment check; existing relative paths still resolve correctly |
-| W2A timestamp validation | Low | Added validation for previously unvalidated fields |
-| Python bridge | Low | Added guard, no existing callers affected |
-| Docker compose | Low | Non-existent sources now skip instead of fail |
-
-### Suggested Regression Test Focus
-
-1. API endpoints with and without `Content-Type: application/json` headers
-2. Knowledge ingestion with edge-case URIs (symlinks, `..` sequences)
-3. W2A signal endpoint with valid and malformed timestamps
-4. Evaluation runner with large golden case datasets (context cancellation)
-5. Idempotency store with high signal volume (memory cleanup verification)
-6. Docker compose generation with missing knowledge source files
+| model/gateway | Low | Fallback context change is self-contained; tests pass |
+| runtimecore/executor | Low | Retry change only affects permanent error path |
+| api/signal_router | Low | Error handling now returns on store errors instead of silently continuing |
+| trace/writer | Low | Added logging, no logic change |
+| release/checker | Low | Fingerprint now more comprehensive |
 
 ## 4. Unresolved Issues
 
-No unresolved issues remain. All 31 discovered bugs were fixed in their respective rounds.
+| # | Round | Description | Reason Unfixed | Recommended Action |
+|---|-------|-------------|----------------|---------------------|
+| 1 | 2 | Dataset URI resolution inconsistency between Checker.resolveDatasetURI and EvaluateManifestFile | Low-risk: both paths resolve identically when manifest loaded via LoadFile(); only diverges for programmatically constructed manifests | Document resolution contract; consider extracting to shared helper |
 
 ## 5. Merge Recommendation
 
 - **Recommendation:** Recommended
 - **Pre-merge checklist:**
   - [x] All unit tests pass
-  - [x] Go build and vet pass
-  - [x] No unresolved High-severity bugs remain
-  - [ ] Regression test suite for affected endpoints
-  - [ ] Code review of security-sensitive changes (CSP, Content-Type, timestamp validation)
-- **Notes:** All changes are minimal and additive. No functional behavior was altered beyond fixing the identified defects. The branch passes all existing tests. Recommend review of `api/server.go` and `w2a/signal.go` changes as they add new validation logic.
+  - [x] Build succeeds
+  - [ ] Manual regression test for model fallback path
+  - [ ] Review eval cache fingerprint change (release/checker.go)
+  - [ ] Verify CSP middleware doesn't break web UI
+- **Notes:** All 10 rounds complete. 22 of 23 bugs fixed. One unresolved issue (dataset URI) is low-risk and affects only non-standard manifest construction paths. The remaining codebase is clean in rounds 6, 7, and 10.

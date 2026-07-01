@@ -69,6 +69,8 @@ func ComputeFingerprint(m *manifest.SolutionManifest, datasetURI string) string 
 	// Include model policy
 	if bytes, err := json.Marshal(m.Runtime.ModelPolicy); err == nil {
 		hash.Write(bytes)
+	} else {
+		hash.Write([]byte("model_policy_marshal_error"))
 	}
 	// Include knowledge sources for data drift detection
 	for _, src := range m.Knowledge.Sources {
@@ -80,6 +82,8 @@ func ComputeFingerprint(m *manifest.SolutionManifest, datasetURI string) string 
 		hash.Write([]byte(comp.Ref))
 		if bytes, err := json.Marshal(comp.Config); err == nil {
 			hash.Write(bytes)
+		} else {
+			hash.Write([]byte("component_config_marshal_error"))
 		}
 	}
 	// Include dataset URI

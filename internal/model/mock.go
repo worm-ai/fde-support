@@ -7,6 +7,8 @@ import (
 	"fde-support/internal/registry"
 )
 
+// modelCostPerToken should match the constant in openai.go.
+const mockCostPerToken = 0.000002
 // MockProvider is a deterministic model provider for testing and CI.
 type MockProvider struct {
 	Responses map[string]string
@@ -43,7 +45,7 @@ func (p *MockProvider) Generate(ctx context.Context, req registry.ModelGenerateR
 
 	completionTokens := len(content) / 4
 	totalTokens := promptTokens + completionTokens
-	cost := float64(totalTokens) * 0.000002
+	cost := float64(totalTokens) * mockCostPerToken
 
 	return registry.ModelGenerateResponse{
 		Model:   req.Model,

@@ -241,6 +241,9 @@ func synthesizeAnswer(message string, passages []any, actions []ActionSummary) s
 			createdTicket = id
 		}
 	}
+	if len(passages) == 0 {
+		return "请根据产品手册处理该问题。"
+	}
 	first := strings.TrimSpace(fmt.Sprint(passages[0]))
 	if first == "" {
 		first = "请根据产品手册处理该问题。"

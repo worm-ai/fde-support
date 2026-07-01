@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"fde-support/internal/environment"
@@ -176,8 +177,16 @@ func (c *Checker) checkKnowledgeQuality(ctx context.Context) CheckResult {
 	reportPath := c.env.ReportPath()
 	data, err := os.ReadFile(reportPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return CheckResult{Name: "knowledge_quality_passed", Passed: false, Severity: "block",
+				Message: "knowledge quality report not found — run 'solution ingest' first"}
+		}
 		return CheckResult{Name: "knowledge_quality_passed", Passed: false, Severity: "block",
 			Message: fmt.Sprintf("knowledge quality report not found: %v", err)}
+	}
+	if len(data) == 0 || strings.TrimSpace(string(data)) == "" {
+		return CheckResult{Name: "knowledge_quality_passed", Passed: false, Severity: "block",
+			Message: "knowledge quality report is empty — run 'solution ingest' first"}
 	}
 	var report struct {
 		GeneratedAt                 time.Time                `json:"generatedAt"`
@@ -237,7 +246,7 @@ func (c *Checker) checkEvalGates(ctx context.Context) CheckResult {
 	}
 	ranDataset := false
 	// Check eval cache: compute fingerprint of manifest and dataset URIs
-	cacheKey := knowledge.FingerprintManifest(c.manifest)
+	cacheKey := evaluation.ComputeFingerprint(c.manifest, "")
 	if cacheKey == c.evalCacheFp && c.evalCache != nil {
 		// Use cached result - verify gates are still satisfied
 		for _, gate := range c.evalCache.GateResults {

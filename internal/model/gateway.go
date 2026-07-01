@@ -50,10 +50,10 @@ func (g *Gateway) Generate(ctx context.Context, req registry.ModelGenerateReques
 	if g.maxLatencyMs <= 0 {
 		timeout = 30 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	resp, err := g.primary.Generate(ctx, req)
+	resp, err := g.primary.Generate(timeoutCtx, req)
 	if err == nil {
 		return resp, nil
 	}
@@ -62,7 +62,11 @@ func (g *Gateway) Generate(ctx context.Context, req registry.ModelGenerateReques
 		if g.fallbackModel != "" {
 			fallbackReq.Model = g.fallbackModel
 		}
-		return g.fallback.Generate(ctx, fallbackReq)
+		// Use original ctx (not timeoutCtx) so fallback has a full timeout window.
+		// Create a fresh timeout context for the fallback attempt.
+		fallbackCtx, fallbackCancel := context.WithTimeout(ctx, timeout)
+		defer fallbackCancel()
+		return g.fallback.Generate(fallbackCtx, fallbackReq)
 	}
 	return registry.ModelGenerateResponse{}, fmt.Errorf("model generation failed: %w", err)
 }

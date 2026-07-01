@@ -156,6 +156,7 @@ func loadKnowledgeSource(source manifest.KnowledgeSourceSpec, resolved string) (
 }
 
 func (s *Store) Retrieve(ctx context.Context, query string, topK int) (registry.KnowledgeResult, error) {
+	// WithTimeout picks the shorter of the parent deadline and 500ms (Go stdlib behavior).
 	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
 	if err := ctx.Err(); err != nil {

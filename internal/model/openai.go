@@ -12,6 +12,9 @@ import (
 	"fde-support/internal/registry"
 )
 
+// modelCostPerToken is an approximate cost per token for basic usage estimation.
+// For production, model-specific pricing should be configured via the manifest.
+const modelCostPerToken = 0.000002
 // OpenAIProvider implements Provider using the OpenAI-compatible chat completions API.
 type OpenAIProvider struct {
 	BaseURL    string
@@ -119,7 +122,7 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req registry.ModelGenerat
 		content = result.Choices[0].Message.Content
 	}
 
-	cost := float64(result.Usage.TotalTokens) * 0.000002
+	cost := float64(result.Usage.TotalTokens) * modelCostPerToken
 
 	return registry.ModelGenerateResponse{
 		Model:   result.Model,
