@@ -148,6 +148,7 @@ func (r *Runner) runCase(ctx context.Context, gc GoldenCase) EvalResult {
 
 	// Run metrics
 	allPassed := true
+	metricsRun := 0
 	for _, name := range r.metricNames() {
 		fn := r.registry.Get(name)
 		if fn == nil {
@@ -155,13 +156,14 @@ func (r *Runner) runCase(ctx context.Context, gc GoldenCase) EvalResult {
 		}
 		value, passed := fn(gc, result)
 		result.Metrics[name] = value
+		metricsRun++
 		if !passed {
 			allPassed = false
 		}
 	}
 
-	// Case passes if intent matches and all metrics pass
-	if len(result.Failures) == 0 {
+	// Case passes if intent matches, at least one metric was run, and all metrics pass
+	if len(result.Failures) == 0 && metricsRun > 0 {
 		result.Passed = allPassed
 	}
 
