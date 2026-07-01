@@ -287,7 +287,6 @@ func (c *llmExtractor) Run(ctx context.Context, input map[string]any, runtime Ru
 		return nil, fmt.Errorf("model gateway not available")
 	}
 	resp, err := model.Generate(ctx, ModelGenerateRequest{
-		Model: "",
 		Messages: []ModelMessage{{Role: "user", Content: text}},
 	})
 	if err != nil {
