@@ -48,6 +48,8 @@ func (s *MemorySignalIdempotencyStore) Get(ctx context.Context, key SignalIdempo
 		delete(s.records, key)
 		return nil, false, nil
 	}
+	// Opportunistic sweep on reads to prevent unbounded memory growth.
+	s.sweepExpired(s.now())
 	return &record, true, nil
 }
 

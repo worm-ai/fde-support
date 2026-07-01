@@ -91,10 +91,15 @@ func (r *SignalRouter) HandleSignal(ctx context.Context, sensor manifest.SensorS
 	}
 
 	key := w2a.SignalIdempotencyKey{Environment: r.env.EnvironmentName, SensorID: signal.SensorID, SignalID: signal.SignalID}
-	if record, ok, err := r.idempotency.Get(ctx, key); err == nil && ok {
+	record, ok, getErr := r.idempotency.Get(ctx, key)
+	if getErr != nil {
+		appErr := shared.Internal("IDEMPOTENCY_STORE_ERROR", "signal_id", "failed to check signal idempotency: "+getErr.Error())
+		return nil, appErr.HTTPStatus, appErr
+	}
+	if ok {
 		response := copyMap(record.Response)
 		response["duplicate"] = true
-		_, _ = r.traceWriter.WriteImmediate(ctx, trace.TraceRecord{
+		if _, err := r.traceWriter.WriteImmediate(ctx, trace.TraceRecord{
 			Solution:    r.manifest.Metadata.Name,
 			Version:     r.manifest.Metadata.Version,
 			Environment: r.env.EnvironmentName,
@@ -102,7 +107,9 @@ func (r *SignalRouter) HandleSignal(ctx context.Context, sensor manifest.SensorS
 			Input:       map[string]any{"sensor": sensor.ID, "signal_id": signal.SignalID},
 			Status:      "success",
 			Duplicate:   true,
-		})
+		}); err != nil {
+			fmt.Fprintf(r.auditLog, "%s WARNING: failed to write duplicate trace for signal %s: %v\n", time.Now().UTC().Format(time.RFC3339), signal.SignalID, err)
+		}
 		return response, record.HTTPStatus, nil
 	}
 

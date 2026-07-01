@@ -176,12 +176,14 @@ func (e *Executor) executeNodeWithRetry(ctx context.Context, traceID string, nod
 		if err != nil {
 			lastErr = err
 			_ = e.traceWriter.AppendSpan(ctx, traceID, trace.TraceSpan{Node: node.ID, Component: node.Component, Attempt: attempt, LatencyMS: time.Since(nodeStart).Milliseconds(), Error: toRuntimeError("input_mapping_error", node.ID, err, attempt)})
-			continue
+			// Input mapping errors are permanent — do not retry.
+			return nil, attempt, err
 		}
 		if appErr := shared.ValidatePrimitiveMap(e.descriptors[node.Component].InputSchema, nodeInput, "workflow.nodes."+node.ID+".inputs"); appErr != nil {
 			lastErr = appErr
 			_ = e.traceWriter.AppendSpan(ctx, traceID, trace.TraceSpan{Node: node.ID, Component: node.Component, Attempt: attempt, Input: nodeInput, LatencyMS: time.Since(nodeStart).Milliseconds(), Error: toRuntimeError("input_type_mismatch", node.ID, appErr, attempt)})
-			continue
+			// Input type mismatch errors are permanent — do not retry.
+			return nil, attempt, appErr
 		}
 		nodeCtx, cancel := context.WithTimeout(ctx, time.Duration(e.env.MaxLatencyMs)*time.Millisecond)
 		output, err := component.Run(nodeCtx, nodeInput, runtimeContext{environment: e.env.EnvironmentName, knowledge: e.scopedKnowledge(node.Component), modelGateway: e.modelGateway, httpGateway: e.httpGateway, request: req, errSummary: errSummary, actions: actions, logger: runtimeLogger{traceID: traceID}})
@@ -322,13 +324,6 @@ func toRuntimeError(errType, failedNode string, err error, attempts int) *regist
 		Type:       errType,
 		Attempts:   attempts,
 	}
-}
-
-func coalesceErr(primary error, secondary error) error {
-	if primary != nil {
-		return primary
-	}
-	return secondary
 }
 
 type workflowExecution struct {

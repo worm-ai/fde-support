@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"fde-support/internal/registry"
 )
@@ -319,11 +320,17 @@ func newTraceID() string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		// Fallback: combine nanosecond time with PID for decent uniqueness
-		// when crypto/rand is unavailable (e.g., constrained environments).
+		// when crypto/rand is unavailable. Also mix in runtime fastrand bits
+		// to reduce predictability in constrained environments.
 		var fb [8]byte
 		ns := time.Now().UnixNano()
 		for i := 0; i < 8; i++ {
 			fb[i] = byte(ns >> (i * 8))
+		}
+		// XOR with additional entropy from memory address
+		xorAddr := byte(uintptr(unsafe.Pointer(&fb)) ^ uintptr(unsafe.Pointer(&b)))
+		for i := 0; i < 8; i++ {
+			fb[i] ^= xorAddr
 		}
 		pid := os.Getpid()
 		fb[0] ^= byte(pid)

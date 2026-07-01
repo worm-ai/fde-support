@@ -163,6 +163,10 @@ func normalizeJSONNumbers(value any) {
 		for key, item := range *v {
 			(*v)[key] = normalizeValue(item)
 		}
+	case []any:
+		for i, item := range v {
+			v[i] = normalizeValue(item)
+		}
 	}
 }
 
