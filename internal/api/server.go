@@ -30,6 +30,9 @@ func NewServer(m *manifest.SolutionManifest, env environment.ResolvedEnvironment
 	webRoot := resolveWebRoot()
 	hasWeb := webRoot != ""
 
+
+	// Apply CSP middleware globally for defense-in-depth across all routes
+	router.Use(cspMiddleware)
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
@@ -141,6 +144,10 @@ func decodeJSON(r *http.Request, target any) error {
 
 func normalizeJSONNumbers(value any) {
 	switch v := value.(type) {
+	case map[string]any:
+		for key, item := range v {
+			v[key] = normalizeValue(item)
+		}
 	case *map[string]any:
 		for key, item := range *v {
 			(*v)[key] = normalizeValue(item)

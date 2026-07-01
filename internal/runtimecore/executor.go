@@ -249,8 +249,12 @@ func buildNodeInput(node workflow.CompiledNode, inputs map[string]any, outputs m
 func (e *Executor) mapResponse(traceID string, outputs map[string]map[string]any, actions []registry.ActionSummary, firstIntent map[string]any, lastAnswerNode string, lastRetrieverNode string) map[string]any {
 	response := map[string]any{"traceId": traceID}
 	if firstIntent != nil {
-		response["intent"] = firstIntent["intent"]
-		response["confidence"] = firstIntent["confidence"]
+		if v, ok := firstIntent["intent"]; ok {
+			response["intent"] = v
+		}
+		if v, ok := firstIntent["confidence"]; ok {
+			response["confidence"] = v
+		}
 	}
 	if lastAnswerNode != "" {
 		answerOutput := outputs[lastAnswerNode]

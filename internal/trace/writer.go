@@ -223,7 +223,7 @@ func (w *FileTraceWriter) WriteImmediate(ctx context.Context, record TraceRecord
 	}
 	status := record.Status
 	if status == "" {
-		status = "failed"
+		status = "completed"
 	}
 	return w.Finish(ctx, r.TraceID, status, record.Error, time.Since(start))
 }
