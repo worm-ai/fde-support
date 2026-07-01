@@ -36,7 +36,7 @@ func TestResultAccuracyFailsWhenExpectedFragmentMissing(t *testing.T) {
 	gc := GoldenCase{Expected: GoldenCaseExpected{AnswerContains: []string{"stock", "42"}}}
 	result := EvalResult{ActualAnswer: "Current stock is unknown."}
 	value, applicable := evalResultAccuracy(gc, result)
-	if !applicable || value != 0 {
+	if applicable || value != 0 {
 		t.Fatalf("expected result accuracy to fail, got value=%v applicable=%v", value, applicable)
 	}
 }
@@ -68,7 +68,7 @@ func TestEscalationPrecisionFailsWhenExpectedHandoffDoesNotHandoff(t *testing.T)
 	gc := GoldenCase{Expected: GoldenCaseExpected{Intent: "complaint"}}
 	result := EvalResult{ActualIntent: "troubleshooting"}
 	value, applicable := evalEscalationPrecision(gc, result)
-	if !applicable || value != 0 {
+	if applicable || value != 0 {
 		t.Fatalf("expected escalation precision to fail, got value=%v applicable=%v", value, applicable)
 	}
 }

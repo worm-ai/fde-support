@@ -69,7 +69,11 @@ func generateComposeContent(m *manifest.SolutionManifest, env environment.Resolv
 	for _, token := range sensorTokens {
 		lines = append(lines, fmt.Sprintf("      - %s=${%s}", token, strings.TrimPrefix(token, "env:")))
 	}
-	lines = append(lines, "      - OPENAI_API_KEY=${OPENAI_API_KEY}")
+	modelKeyVar := "OPENAI_API_KEY"
+	if env.ModelKeyRef != "" && strings.HasPrefix(env.ModelKeyRef, "env:") {
+		modelKeyVar = strings.TrimPrefix(env.ModelKeyRef, "env:")
+	}
+	lines = append(lines, "      - "+modelKeyVar+"=${"+modelKeyVar+"}")
 	lines = append(lines, "")
 	lines = append(lines, "volumes:")
 	lines = append(lines, "  solution-traces:")
@@ -79,13 +83,17 @@ func generateComposeContent(m *manifest.SolutionManifest, env environment.Resolv
 }
 
 func generateEnvExample(m *manifest.SolutionManifest, env environment.ResolvedEnvironment) string {
+	modelKeyVar := "OPENAI_API_KEY"
+	if env.ModelKeyRef != "" && strings.HasPrefix(env.ModelKeyRef, "env:") {
+		modelKeyVar = strings.TrimPrefix(env.ModelKeyRef, "env:")
+	}
 	lines := []string{
 		"# Solution-as-Code FDE Platform - Environment Variables",
 		fmt.Sprintf("# Solution: %s v%s", m.Metadata.Name, m.Metadata.Version),
 		fmt.Sprintf("# Environment: %s", env.EnvironmentName),
 		"",
 		"# Model credentials (required)",
-		"OPENAI_API_KEY=sk-...",
+		modelKeyVar + "=sk-...",
 		"",
 	}
 
@@ -217,10 +225,14 @@ func copyFile(src, dst string) error {
 }
 
 func collectSensorTokens(m *manifest.SolutionManifest) []string {
+	seen := map[string]bool{}
 	var tokens []string
 	for _, sensor := range m.Perception.Sensors {
 		if ref, ok := sensor.Config["authTokenRef"].(string); ok && strings.HasPrefix(ref, "env:") {
-			tokens = append(tokens, ref)
+			if !seen[ref] {
+				seen[ref] = true
+				tokens = append(tokens, ref)
+			}
 		}
 	}
 	return tokens

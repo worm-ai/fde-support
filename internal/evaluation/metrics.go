@@ -44,7 +44,7 @@ func evalResultAccuracy(gc GoldenCase, result EvalResult) (float64, bool) {
 	answer := strings.ToLower(result.ActualAnswer)
 	for _, fragment := range gc.Expected.AnswerContains {
 		if !strings.Contains(answer, strings.ToLower(fragment)) {
-			return 0, true
+			return 0, false
 		}
 	}
 	return 1, true
@@ -64,7 +64,7 @@ func evalEscalationPrecision(gc GoldenCase, result EvalResult) (float64, bool) {
 			return 1, true
 		}
 	}
-	return 0, true
+	return 0, false
 }
 
 func actionHandoffLike(action any) bool {
