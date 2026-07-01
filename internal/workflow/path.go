@@ -16,7 +16,7 @@ func ParseSimplePath(path string) (string, string, error) {
 	}
 	for _, segment := range segments {
 		if !pathSegmentPattern.MatchString(segment) {
-			return "", "", fmt.Errorf("invalid path segment %q", segment)
+			return "", "", fmt.Errorf("invalid path segment %q in path %q", segment, path)
 		}
 	}
 	return segments[0], segments[1], nil

@@ -1,6 +1,7 @@
 package w2a
 
 import (
+	"time"
 	"fmt"
 
 	"fde-support/internal/shared"
@@ -50,6 +51,13 @@ func ValidateSignal(raw map[string]any) (SignalEnvelope, *shared.AppError) {
 	if _, ok := raw["emitted_at"]; !ok {
 		return SignalEnvelope{}, shared.BadRequest("W2A_FIELD_MISSING", "emitted_at", "emitted_at is required")
 	}
+	if s, ok := raw["emitted_at"].(string); ok && s != "" {
+		if _, err := time.Parse(time.RFC3339, s); err != nil {
+			if _, err := time.Parse("2006-01-02T15:04:05.999Z07:00", s); err != nil {
+				return SignalEnvelope{}, shared.BadRequest("W2A_INVALID_TIMESTAMP", "emitted_at", "emitted_at must be RFC3339 timestamp")
+			}
+		}
+	}
 	source, ok := raw["source"].(map[string]any)
 	if !ok {
 		return SignalEnvelope{}, shared.BadRequest("W2A_FIELD_MISSING", "source", "source is required")
@@ -73,6 +81,13 @@ func ValidateSignal(raw map[string]any) (SignalEnvelope, *shared.AppError) {
 	}
 	if _, ok := event["occurred_at"]; !ok {
 		return SignalEnvelope{}, shared.BadRequest("W2A_FIELD_MISSING", "event.occurred_at", "event.occurred_at is required")
+	}
+	if s, ok := event["occurred_at"].(string); ok && s != "" {
+		if _, err := time.Parse(time.RFC3339, s); err != nil {
+			if _, err := time.Parse("2006-01-02T15:04:05.999Z07:00", s); err != nil {
+				return SignalEnvelope{}, shared.BadRequest("W2A_INVALID_TIMESTAMP", "event.occurred_at", "event.occurred_at must be RFC3339 timestamp")
+			}
+		}
 	}
 	summary, _ := event["summary"].(string)
 	return SignalEnvelope{

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -82,6 +83,10 @@ func NewServer(m *manifest.SolutionManifest, env environment.ResolvedEnvironment
 		writeJSON(w, http.StatusOK, record)
 	})
 	router.Post("/chat", func(w http.ResponseWriter, r *http.Request) {
+		if ct := r.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, "application/json") {
+			writeAppError(w, shared.BadRequest("UNSUPPORTED_MEDIA_TYPE", "Content-Type", "Content-Type must be application/json"))
+			return
+		}
 		var payload map[string]any
 		if err := decodeJSON(r, &payload); err != nil {
 			writeAppError(w, shared.BadRequest("INVALID_JSON", "", err.Error()))
@@ -98,6 +103,12 @@ func NewServer(m *manifest.SolutionManifest, env environment.ResolvedEnvironment
 		if endpoint, ok := sensor.Config["endpointPath"].(string); ok && endpoint != "" {
 			sensorCopy := sensor
 			router.Post(endpoint, func(w http.ResponseWriter, r *http.Request) {
+				if ct := r.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, "application/json") {
+					appErr := shared.BadRequest("UNSUPPORTED_MEDIA_TYPE", "Content-Type", "Content-Type must be application/json")
+					_ = signalRouter.writeRejectedTrace(r.Context(), sensorCopy, nil, appErr)
+					writeAppError(w, appErr)
+					return
+				}
 				var payload map[string]any
 				if err := decodeJSON(r, &payload); err != nil {
 					appErr := shared.BadRequest("INVALID_JSON", "", err.Error())
