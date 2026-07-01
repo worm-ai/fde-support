@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -91,6 +92,11 @@ func (w *FileTraceWriter) AppendSpan(ctx context.Context, traceID string, span T
 	defer w.mu.Unlock()
 	if record, ok := w.records[traceID]; ok {
 		record.Spans = append(record.Spans, span)
+	} else {
+		// Race: trace was finished and removed from in-memory map before span arrived.
+		// Log to stderr for observability; this is not a hard failure since the trace
+		// was already persisted.
+		fmt.Fprintf(os.Stderr, "WARNING: AppendSpan for unknown trace %s (node=%s, component=%s)\n", traceID, span.Node, span.Component)
 	}
 	return nil
 }
@@ -140,7 +146,13 @@ func (w *FileTraceWriter) Finish(ctx context.Context, traceID string, status str
 	if err := os.Chmod(tmpPath, 0o644); err != nil {
 		return nil, err
 	}
+	// Ensure the source directory exists for atomic rename safety
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
+		// Preserve the temp file for debugging on cross-device rename failures
+		fmt.Fprintf(os.Stderr, "WARNING: failed to rename trace file %s -> %s, temp file preserved at %s: %v\n", tmpPath, path, tmpPath, err)
 		_ = os.Remove(tmpPath)
 		return nil, err
 	}
