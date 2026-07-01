@@ -206,6 +206,16 @@ func containedPath(base, target string) bool {
 	if err != nil {
 		return false
 	}
+	// If the target equals the base or the target is a subdirectory of base, it's contained.
+	// filepath.Rel returns "." for same directory; otherwise we check it doesn't escape.
+	if baseAbs == targetAbs {
+		return true
+	}
+	// Ensure targetAbs has path separator suffix for prefix check on exact match edge cases.
+	baseSep := baseAbs + string(filepath.Separator)
+	if strings.HasPrefix(targetAbs, baseSep) {
+		return true
+	}
 	rel, err := filepath.Rel(baseAbs, targetAbs)
 	if err != nil {
 		return false
