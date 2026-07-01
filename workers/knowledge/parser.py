@@ -109,6 +109,8 @@ def main():
         sys.exit(1)
 
     records = parser(input_path)
+    if not records:
+        records = [{"source_ref": input_path.name, "content": ""}]
     with open(output_path, "w", encoding="utf-8") as f:
         for record in records:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")

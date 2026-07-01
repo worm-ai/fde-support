@@ -15,6 +15,9 @@ type PythonBridge struct {
 
 // NewPythonBridge creates a bridge with defaults for python3 and the workers directory.
 func NewPythonBridge(projectRoot string) *PythonBridge {
+	if projectRoot == "" {
+		projectRoot = "."
+	}
 	return &PythonBridge{
 		PythonBin: "python3",
 		ScriptDir: filepath.Join(projectRoot, "workers", "knowledge"),
@@ -27,6 +30,9 @@ func (b *PythonBridge) Run(inputPath, outputPath string) (int, error) {
 	script := filepath.Join(b.ScriptDir, "parser.py")
 	if _, err := os.Stat(script); err != nil {
 		return 0, fmt.Errorf("python parser script not found: %w", err)
+	}
+	if _, err := os.Stat(inputPath); err != nil {
+		return 0, fmt.Errorf("input file not found: %w", err)
 	}
 
 	cmd := exec.Command(b.PythonBin, script, inputPath, outputPath)
