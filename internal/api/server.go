@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -30,6 +31,9 @@ func NewServer(m *manifest.SolutionManifest, env environment.ResolvedEnvironment
 	webRoot := resolveWebRoot()
 	hasWeb := webRoot != ""
 
+
+	// Apply CSP middleware globally for defense-in-depth across all routes
+	router.Use(cspMiddleware)
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
@@ -79,6 +83,10 @@ func NewServer(m *manifest.SolutionManifest, env environment.ResolvedEnvironment
 		writeJSON(w, http.StatusOK, record)
 	})
 	router.Post("/chat", func(w http.ResponseWriter, r *http.Request) {
+		if ct := r.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, "application/json") {
+			writeAppError(w, shared.BadRequest("UNSUPPORTED_MEDIA_TYPE", "Content-Type", "Content-Type must be application/json"))
+			return
+		}
 		var payload map[string]any
 		if err := decodeJSON(r, &payload); err != nil {
 			writeAppError(w, shared.BadRequest("INVALID_JSON", "", err.Error()))
@@ -95,6 +103,12 @@ func NewServer(m *manifest.SolutionManifest, env environment.ResolvedEnvironment
 		if endpoint, ok := sensor.Config["endpointPath"].(string); ok && endpoint != "" {
 			sensorCopy := sensor
 			router.Post(endpoint, func(w http.ResponseWriter, r *http.Request) {
+				if ct := r.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, "application/json") {
+					appErr := shared.BadRequest("UNSUPPORTED_MEDIA_TYPE", "Content-Type", "Content-Type must be application/json")
+					_ = signalRouter.writeRejectedTrace(r.Context(), sensorCopy, nil, appErr)
+					writeAppError(w, appErr)
+					return
+				}
 				var payload map[string]any
 				if err := decodeJSON(r, &payload); err != nil {
 					appErr := shared.BadRequest("INVALID_JSON", "", err.Error())
@@ -141,6 +155,10 @@ func decodeJSON(r *http.Request, target any) error {
 
 func normalizeJSONNumbers(value any) {
 	switch v := value.(type) {
+	case map[string]any:
+		for key, item := range v {
+			v[key] = normalizeValue(item)
+		}
 	case *map[string]any:
 		for key, item := range *v {
 			(*v)[key] = normalizeValue(item)
@@ -182,6 +200,7 @@ func writeAppError(w http.ResponseWriter, appErr *shared.AppError) {
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
 }

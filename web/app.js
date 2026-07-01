@@ -320,11 +320,11 @@ function updateDerivedView() {
 
 async function requestJSON(path, options = {}) {
   const response = await fetch(path, {
+    ...options,
     headers: {
       "Content-Type": "application/json",
       ...(options.headers ?? {}),
     },
-    ...options,
   });
   const payload = await response.json();
   if (!response.ok) {

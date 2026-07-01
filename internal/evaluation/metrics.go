@@ -7,7 +7,7 @@ import (
 // evalCitationCoverage checks if citations are present when expected.mustCite is true.
 func evalCitationCoverage(gc GoldenCase, result EvalResult) (float64, bool) {
 	if !gc.Expected.MustCite {
-		return 1, true
+		return 0, false
 	}
 	if result.ActualAnswer == "" {
 		return 0, false
@@ -27,14 +27,14 @@ func evalAnswerAccuracy(gc GoldenCase, result EvalResult) (float64, bool) {
 	allFound := true
 	for _, word := range gc.Expected.AnswerContains {
 		if !strings.Contains(answer, strings.ToLower(word)) {
-			allFound = false
-			break
+		allFound = false
+		break
 		}
 	}
 	if allFound {
 		return 1.0, true
 	}
-	return 0, false
+		return 0, true
 }
 
 func evalResultAccuracy(gc GoldenCase, result EvalResult) (float64, bool) {
@@ -53,15 +53,15 @@ func evalResultAccuracy(gc GoldenCase, result EvalResult) (float64, bool) {
 func evalEscalationPrecision(gc GoldenCase, result EvalResult) (float64, bool) {
 	expected := strings.ToLower(gc.Expected.Intent)
 	if expected != "human_handoff" && expected != "complaint" {
-		return 0, false
+		return 0, true
 	}
 	actual := strings.ToLower(result.ActualIntent)
-	if actual == "human_handoff" || strings.Contains(actual, "handoff") {
+	if actual == "human_handoff" {
 		return 1, true
 	}
 	for _, action := range result.ActualActions {
 		if actionHandoffLike(action) {
-			return 1, true
+		return 1, true
 		}
 	}
 	return 0, true
@@ -71,18 +71,18 @@ func actionHandoffLike(action any) bool {
 	switch v := action.(type) {
 	case map[string]any:
 		for _, key := range []string{"node", "status"} {
-			if value, ok := v[key].(string); ok && strings.Contains(strings.ToLower(value), "handoff") {
-				return true
-			}
+		if value, ok := v[key].(string); ok && strings.Contains(strings.ToLower(value), "handoff") {
+			return true
+		}
 		}
 		if output, ok := v["output"]; ok {
-			return actionHandoffLike(output)
+		return actionHandoffLike(output)
 		}
 	case []any:
 		for _, item := range v {
-			if actionHandoffLike(item) {
-				return true
-			}
+		if actionHandoffLike(item) {
+			return true
+		}
 		}
 	}
 	return false

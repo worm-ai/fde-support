@@ -59,7 +59,16 @@ func (s *MemorySignalIdempotencyStore) Put(ctx context.Context, key SignalIdempo
 	record.StoredAt = now
 	record.ExpiresAt = now.Add(ttl)
 	s.mu.Lock()
+	s.sweepExpired(now)
 	s.records[key] = record
 	s.mu.Unlock()
 	return nil
+}
+
+func (s *MemorySignalIdempotencyStore) sweepExpired(now time.Time) {
+	for key, rec := range s.records {
+		if now.After(rec.ExpiresAt) {
+			delete(s.records, key)
+		}
+	}
 }

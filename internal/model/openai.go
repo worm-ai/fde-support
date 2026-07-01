@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -102,13 +103,15 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req registry.ModelGenerat
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		var errBody bytes.Buffer
+		_, _ = errBody.ReadFrom(io.LimitReader(resp.Body, 4096))
+		return registry.ModelGenerateResponse{}, fmt.Errorf("openai returned status %d: %s", resp.StatusCode, errBody.String())
+	}
+
 	var result openaiChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return registry.ModelGenerateResponse{}, fmt.Errorf("decode response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return registry.ModelGenerateResponse{}, fmt.Errorf("openai returned status %d", resp.StatusCode)
 	}
 
 	content := ""

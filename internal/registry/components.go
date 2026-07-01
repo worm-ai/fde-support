@@ -95,7 +95,11 @@ func (c *keywordRetriever) Run(ctx context.Context, input map[string]any, runtim
 		return nil, err
 	}
 	query, _ := input["query"].(string)
-	result, err := runtime.Knowledge().Retrieve(ctx, query, c.topK)
+	kr := runtime.Knowledge()
+	if kr == nil {
+		return map[string]any{"passages": []any{}, "citations": []any{}}, nil
+	}
+	result, err := kr.Retrieve(ctx, query, c.topK)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +320,11 @@ func (c *dataQuery) Run(ctx context.Context, input map[string]any, runtime Runti
 	if query == "" {
 		query, _ = input["query"].(string)
 	}
-	result, err := runtime.Knowledge().Retrieve(ctx, query, 10)
+	kr := runtime.Knowledge()
+	if kr == nil {
+		return map[string]any{"rows": []any{}, "count": 0, "citations": []any{}, "status": "unavailable"}, nil
+	}
+	result, err := kr.Retrieve(ctx, query, 10)
 	if err != nil {
 		return nil, err
 	}

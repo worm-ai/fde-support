@@ -164,6 +164,13 @@ func ingestCSV(ctx context.Context, source manifest.KnowledgeSourceSpec, resolve
 	}
 	defer file.Close()
 
+	if err := ctx.Err(); err != nil {
+		result.Status = "blocked"
+		result.Items = append(result.Items, QualityReportItem{
+			Code: "KNOWLEDGE_INGEST_CANCELLED", Severity: "block", Source: source.ID, Message: err.Error(),
+		})
+		return result
+	}
 	reader := csv.NewReader(file)
 	headers, err := reader.Read()
 	if err != nil {

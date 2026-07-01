@@ -127,9 +127,7 @@ func (e *Executor) Execute(ctx context.Context, req RuntimeRequest) (map[string]
 		return response, finished, runErr.err
 	}
 	response := e.mapResponse(record.TraceID, exec.outputs, exec.actions, exec.firstIntent, exec.lastAnswerNode, exec.lastRetrieverNode)
-	if _, hasWarnings := response["_traceWarning"]; !hasWarnings {
-		// Ensure map is not nil before adding warning
-	}
+
 	finished, finishErr := e.traceWriter.Finish(ctx, record.TraceID, "success", nil, time.Since(start))
 	if finishErr != nil {
 		fmt.Fprintf(os.Stderr, "[%s] WARNING: trace finish failed: %v\n", record.TraceID, finishErr)
@@ -249,8 +247,12 @@ func buildNodeInput(node workflow.CompiledNode, inputs map[string]any, outputs m
 func (e *Executor) mapResponse(traceID string, outputs map[string]map[string]any, actions []registry.ActionSummary, firstIntent map[string]any, lastAnswerNode string, lastRetrieverNode string) map[string]any {
 	response := map[string]any{"traceId": traceID}
 	if firstIntent != nil {
-		response["intent"] = firstIntent["intent"]
-		response["confidence"] = firstIntent["confidence"]
+		if v, ok := firstIntent["intent"]; ok {
+			response["intent"] = v
+		}
+		if v, ok := firstIntent["confidence"]; ok {
+			response["confidence"] = v
+		}
 	}
 	if lastAnswerNode != "" {
 		answerOutput := outputs[lastAnswerNode]

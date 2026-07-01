@@ -194,7 +194,10 @@ func (c *Checker) checkKnowledgeQuality(ctx context.Context) CheckResult {
 		return CheckResult{Name: "knowledge_quality_passed", Passed: false, Severity: "block",
 			Message: fmt.Sprintf("invalid quality report: %v", err)}
 	}
-	if report.GeneratedAt.IsZero() || time.Since(report.GeneratedAt) > 24*time.Hour {
+	if report.GeneratedAt.IsZero() {
+		return CheckResult{Name: "knowledge_quality_passed", Passed: false, Severity: "block", Message: "knowledge quality report is missing a generatedAt timestamp"}
+	}
+	if time.Since(report.GeneratedAt) > 24*time.Hour {
 		return CheckResult{Name: "knowledge_quality_passed", Passed: false, Severity: "block", Message: "knowledge quality report is older than 24 hours"}
 	}
 	if report.ManifestFingerprint != knowledge.FingerprintManifest(c.manifest) {
