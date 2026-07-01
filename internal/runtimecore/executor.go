@@ -256,13 +256,17 @@ func (e *Executor) mapResponse(traceID string, outputs map[string]map[string]any
 	}
 	if lastAnswerNode != "" {
 		answerOutput := outputs[lastAnswerNode]
-		response["answer"] = answerOutput["answer"]
-		if citations, ok := answerOutput["citations"]; ok {
-			response["citations"] = citations
+		if answerOutput != nil {
+			response["answer"] = answerOutput["answer"]
+			if citations, ok := answerOutput["citations"]; ok {
+				response["citations"] = citations
+			}
 		}
 	}
 	if _, ok := response["citations"]; !ok && lastRetrieverNode != "" {
-		response["citations"] = outputs[lastRetrieverNode]["citations"]
+		if retrieverOutput := outputs[lastRetrieverNode]; retrieverOutput != nil {
+			response["citations"] = retrieverOutput["citations"]
+		}
 	}
 	if _, ok := response["answer"]; !ok {
 		response["answer"] = "当前知识库为空或未检索到相关知识，请联系人工客服。"

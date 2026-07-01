@@ -318,7 +318,17 @@ func (w *FileTraceWriter) Load(ctx context.Context, traceID string) (*TraceRecor
 func newTraceID() string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return "trace_" + hex.EncodeToString([]byte(time.Now().Format("150405.000000000")))
+		// Fallback: combine nanosecond time with PID for decent uniqueness
+		// when crypto/rand is unavailable (e.g., constrained environments).
+		var fb [8]byte
+		ns := time.Now().UnixNano()
+		for i := 0; i < 8; i++ {
+			fb[i] = byte(ns >> (i * 8))
+		}
+		pid := os.Getpid()
+		fb[0] ^= byte(pid)
+		fb[1] ^= byte(pid >> 8)
+		return "trace_" + hex.EncodeToString(fb[:])
 	}
 	return "trace_" + hex.EncodeToString(b[:])
 }

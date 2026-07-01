@@ -122,6 +122,9 @@ func LoadWithOptions(ctx context.Context, m *manifest.SolutionManifest, env envi
 			gateItems := evaluateQualityGates(source.ID, source.Schema, units, m.Knowledge.QualityGates)
 			report.Items = append(report.Items, gateItems...)
 		}
+		// Run schema field validation against loaded units
+		schemaItems := validateSchemaFields(units, m.Knowledge.Schemas, source.ID, source.Schema)
+		report.Items = append(report.Items, schemaItems...)
 	}
 	for _, item := range report.Items {
 		if item.Severity == "block" {
