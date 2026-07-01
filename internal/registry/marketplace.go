@@ -15,6 +15,9 @@ import (
 
 // PublishComponent packages a component directory into a .tar.gz archive.
 func PublishComponent(componentDir, outputDir string) (string, error) {
+	if componentDir == "" {
+		return "", fmt.Errorf("component directory is required")
+	}
 	// Read component.yaml to get name and version
 	componentPath := filepath.Join(componentDir, "component.yaml")
 	data, err := os.ReadFile(componentPath)

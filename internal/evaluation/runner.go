@@ -47,6 +47,9 @@ func (r *Runner) Run(ctx context.Context, datasetURI string, gates []manifest.Ev
 
 	metricCounts := map[string]int{}
 	for _, gc := range cases {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		result := r.runCase(ctx, gc)
 		report.Results = append(report.Results, result)
 		if result.Passed {

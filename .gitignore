@@ -6,3 +6,6 @@ examples/**/.solution/
 !.tools/README.md
 .tools/go1.21.13/go/
 .tools/go1.21.13/*.zip
+
+# Binary
+/solution

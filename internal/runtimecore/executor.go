@@ -127,9 +127,7 @@ func (e *Executor) Execute(ctx context.Context, req RuntimeRequest) (map[string]
 		return response, finished, runErr.err
 	}
 	response := e.mapResponse(record.TraceID, exec.outputs, exec.actions, exec.firstIntent, exec.lastAnswerNode, exec.lastRetrieverNode)
-	if _, hasWarnings := response["_traceWarning"]; !hasWarnings {
-		// Ensure map is not nil before adding warning
-	}
+
 	finished, finishErr := e.traceWriter.Finish(ctx, record.TraceID, "success", nil, time.Since(start))
 	if finishErr != nil {
 		fmt.Fprintf(os.Stderr, "[%s] WARNING: trace finish failed: %v\n", record.TraceID, finishErr)

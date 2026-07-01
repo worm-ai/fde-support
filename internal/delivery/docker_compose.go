@@ -173,6 +173,9 @@ func copyRuntimeInputs(m *manifest.SolutionManifest, outputDir string) error {
 		}
 		info, err := os.Stat(src)
 		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			return fmt.Errorf("stat knowledge source %s: %w", source.URI, err)
 		}
 		if info.IsDir() {
