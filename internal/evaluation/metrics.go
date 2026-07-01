@@ -34,7 +34,7 @@ func evalAnswerAccuracy(gc GoldenCase, result EvalResult) (float64, bool) {
 	if allFound {
 		return 1.0, true
 	}
-	return 0, false
+		return 0, true
 }
 
 func evalResultAccuracy(gc GoldenCase, result EvalResult) (float64, bool) {
@@ -44,7 +44,7 @@ func evalResultAccuracy(gc GoldenCase, result EvalResult) (float64, bool) {
 	answer := strings.ToLower(result.ActualAnswer)
 	for _, fragment := range gc.Expected.AnswerContains {
 		if !strings.Contains(answer, strings.ToLower(fragment)) {
-			return 0, true
+				return 0, true
 		}
 	}
 	return 1, true
@@ -53,10 +53,10 @@ func evalResultAccuracy(gc GoldenCase, result EvalResult) (float64, bool) {
 func evalEscalationPrecision(gc GoldenCase, result EvalResult) (float64, bool) {
 	expected := strings.ToLower(gc.Expected.Intent)
 	if expected != "human_handoff" && expected != "complaint" {
-		return 0, false
+			return 0, true
 	}
 	actual := strings.ToLower(result.ActualIntent)
-	if actual == "human_handoff" || strings.Contains(actual, "handoff") {
+	if actual == "human_handoff" {
 		return 1, true
 	}
 	for _, action := range result.ActualActions {
